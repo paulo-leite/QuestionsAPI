@@ -1,0 +1,46 @@
+@baseUrl = http://127.0.0.1:8000
+@documentId = substitua-pelo-id-do-upload
+
+GET {{baseUrl}}/health
+Accept: application/json
+
+###
+
+POST {{baseUrl}}/questions
+Content-Type: application/json
+
+{
+  "document_id": "{{documentId}}",
+  "question": "Qual é o tema principal do documento?"
+}
+
+###
+
+POST {{baseUrl}}/research
+Content-Type: application/json
+
+{
+  "document_id": "{{documentId}}",
+  "question": "Apresente as principais conclusões e evidências.",
+  "depth": 2
+}
+
+###
+
+POST {{baseUrl}}/research/sessions
+Content-Type: application/json
+
+{
+  "document_id": "{{documentId}}",
+  "question": "Analise riscos, benefícios e limitações.",
+  "depth": 2
+}
+
+###
+
+POST {{baseUrl}}/research/sessions/substitua-pelo-id-da-sessao/clarifications
+Content-Type: application/json
+
+{
+  "answer": "Priorize riscos técnicos e impactos operacionais."
+}
