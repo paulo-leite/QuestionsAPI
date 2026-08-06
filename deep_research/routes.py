@@ -1,8 +1,11 @@
 """Rotas HTTP da API de documentos e pesquisa."""
 
+import asyncio
+
 from fastapi import APIRouter, File, UploadFile, status
 
-from deep_research.config import MAX_FILE_SIZE
+from deep_research.agents import enforce_guardrail
+from deep_research.config import GUARDRAIL_MAX_QUESTION_CHARS, MAX_FILE_SIZE
 from deep_research.errors import ApplicationError
 from deep_research.models import (
     ClarificationAnswer,
@@ -53,9 +56,18 @@ def upload_document(file: UploadFile = File(...)) -> UploadResponse:
 
 
 @router.post("/questions", response_model=QuestionResponse)
-def ask_question(request: QuestionRequest) -> QuestionResponse:
+async def ask_question(request: QuestionRequest) -> QuestionResponse:
+    question = await enforce_guardrail(
+        request.question,
+        max_characters=GUARDRAIL_MAX_QUESTION_CHARS,
+        field_name="pergunta",
+    )
     vectorstore = require_vectorstore(request.document_id)
-    return answer_from_vectorstore(vectorstore, request.question)
+    return await asyncio.to_thread(
+        answer_from_vectorstore,
+        vectorstore,
+        question,
+    )
 
 
 @router.post("/research", response_model=ResearchResponse)

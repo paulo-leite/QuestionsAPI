@@ -13,9 +13,14 @@ from deep_research.agents import (
     create_search_plan,
     deduplicate_sources,
     execute_searches,
+    enforce_guardrail,
     generate_clarification_questions,
     review_findings,
     write_report,
+)
+from deep_research.config import (
+    GUARDRAIL_MAX_CLARIFICATION_CHARS,
+    GUARDRAIL_MAX_QUESTION_CHARS,
 )
 from deep_research.errors import ApplicationError
 from deep_research.models import (
@@ -50,6 +55,11 @@ class ResearchManager:
         triagem identifica ambiguidade, a sessão retorna no estado
         ``awaiting_clarification`` com até três perguntas para o usuário.
         """
+        question = await enforce_guardrail(
+            request.question,
+            max_characters=GUARDRAIL_MAX_QUESTION_CHARS,
+            field_name="pergunta",
+        )
         if get_vectorstore(request.document_id) is None:
             raise ApplicationError(
                 "Documento não encontrado. Faça o upload novamente.", 404
@@ -58,7 +68,7 @@ class ResearchManager:
         session = ResearchState(
             session_id=str(uuid4()),
             document_id=request.document_id,
-            original_query=request.question,
+            original_query=question,
             depth=request.depth,
             status="pending",
         )
@@ -67,7 +77,7 @@ class ResearchManager:
 
         try:
             needs_clarification = await check_needs_clarification(
-                request.question
+                question
             )
         except Exception:
             # A triagem é auxiliar: sua indisponibilidade não bloqueia a pesquisa.
@@ -76,7 +86,7 @@ class ResearchManager:
         if needs_clarification:
             try:
                 session.clarification_questions = (
-                    await generate_clarification_questions(request.question)
+                    await generate_clarification_questions(question)
                 )
             except Exception:
                 # Perguntas previsíveis mantêm o fluxo utilizável se o agente falhar.
@@ -88,7 +98,7 @@ class ResearchManager:
             session.status = "awaiting_clarification"
             return session
 
-        await self._complete_session(session, request.question)
+        await self._complete_session(session, question)
         return session
 
     async def provide_clarification(
@@ -110,6 +120,11 @@ class ResearchManager:
                 "A sessão não está aguardando esclarecimento.", 409
             )
 
+        answer = await enforce_guardrail(
+            answer,
+            max_characters=GUARDRAIL_MAX_CLARIFICATION_CHARS,
+            field_name="resposta de esclarecimento",
+        )
         if session.answer_question(answer):
             return session
 
@@ -139,6 +154,7 @@ class ResearchManager:
             query,
             session.depth,
             retrieval_question=session.original_query,
+            validate_input=False,
         )
         session.findings = response.findings
         session.sources = response.sources
@@ -158,13 +174,22 @@ class ResearchManager:
         depth: int,
         *,
         retrieval_question: str | None = None,
+        validate_input: bool = True,
     ) -> ResearchResponse:
         """Valida o documento e executa uma pesquisa aprofundada não interativa.
 
         ``retrieval_question`` permite manter a pergunta original como busca-base
         quando ``question`` também contém esclarecimentos usados pelo planejamento
-        e pela redação.
+        e pela redação. ``validate_input=False`` é reservado ao texto enriquecido
+        internamente depois de todas as entradas terem sido validadas.
         """
+        if validate_input:
+            question = await enforce_guardrail(
+                question,
+                max_characters=GUARDRAIL_MAX_QUESTION_CHARS,
+                field_name="pergunta",
+            )
+
         vectorstore = get_vectorstore(document_id)
         if vectorstore is None:
             raise ApplicationError(

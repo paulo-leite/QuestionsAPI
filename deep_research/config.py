@@ -1,5 +1,6 @@
 """Configurações compartilhadas da aplicação."""
 
+import json
 import os
 
 from dotenv import load_dotenv
@@ -16,6 +17,40 @@ RERANK_TIMEOUT_SECONDS = 30
 DOCLING_MAX_TOKENS = 512
 DOCLING_TOKENIZER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_MODEL = "jina-embeddings-v3"
+GUARDRAIL_MAX_QUESTION_CHARS = int(
+    os.getenv("GUARDRAIL_MAX_QUESTION_CHARS", "2000")
+)
+GUARDRAIL_MAX_CLARIFICATION_CHARS = int(
+    os.getenv("GUARDRAIL_MAX_CLARIFICATION_CHARS", "1000")
+)
+GUARDRAIL_USE_LLM = os.getenv("GUARDRAIL_USE_LLM", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+
+def _load_guardrail_blocked_terms() -> tuple[str, ...]:
+    """Carrega palavras bloqueadas de uma lista JSON ou texto separado por vírgulas."""
+    raw = os.getenv("GUARDRAIL_BLOCKED_TERMS", "[]").strip()
+    if not raw:
+        return ()
+
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError:
+        values = [value.strip() for value in raw.split(",")]
+
+    if not isinstance(values, list) or not all(
+        isinstance(value, str) for value in values
+    ):
+        raise RuntimeError(
+            "GUARDRAIL_BLOCKED_TERMS deve ser uma lista JSON de textos."
+        )
+    return tuple(value.strip() for value in values if value.strip())
+
+
+GUARDRAIL_BLOCKED_TERMS = _load_guardrail_blocked_terms()
 
 
 def require_env(name: str) -> str:

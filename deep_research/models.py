@@ -96,6 +96,14 @@ class ClarificationAnswer(BaseModel):
     answer: str = Field(min_length=1)
 
 
+class GuardrailResult(BaseModel):
+    """Decisão produzida pelo agente de proteção de entradas textuais."""
+
+    allowed: bool
+    reason: str
+    violations: list[str] = Field(default_factory=list, max_length=5)
+
+
 class ResearchState(BaseModel):
     session_id: str
     document_id: str
