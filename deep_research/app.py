@@ -12,7 +12,7 @@ def create_app() -> FastAPI:
         title="API de pesquisa profunda em documentos",
         description=(
             "Pesquisa adaptativa com triagem, esclarecimento, verificação de "
-            "suficiência e refinamento, baseada exclusivamente no PDF enviado."
+            "suficiência e refinamento, baseada exclusivamente no PDF ou CSV enviado."
         ),
         version="4.0.0",
     )

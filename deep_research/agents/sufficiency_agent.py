@@ -26,7 +26,7 @@ def _format_findings(findings: list[ResearchFinding]) -> str:
     return "\n\n".join(
         f"Subpergunta: {finding.subquestion}\n"
         f"Resposta: {finding.answer}\n"
-        f"Páginas: {', '.join(str(s.page) for s in finding.sources) or 'nenhuma'}\n"
+        f"Fontes: {', '.join(s.location_label() for s in finding.sources) or 'nenhuma'}\n"
         f"Erro: {finding.error or 'nenhum'}"
         for finding in findings
     ) or "Nenhum achado disponível."

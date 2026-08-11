@@ -8,7 +8,9 @@ from .config import MAX_RESEARCH_ROUNDS
 class UploadResponse(BaseModel):
     document_id: str
     filename: str
-    pages: int
+    file_type: str
+    pages: int | None = None
+    rows: int | None = None
     chunks: int
     chunking_method: str
     max_tokens_per_chunk: int
@@ -24,8 +26,21 @@ class QuestionRequest(BaseModel):
 
 
 class Source(BaseModel):
-    page: int
+    page: int | None = None
+    row_start: int | None = None
+    row_end: int | None = None
     excerpt: str
+
+    def location_label(self) -> str:
+        """Formata a localização da evidência em um PDF ou CSV."""
+        if self.row_start is not None:
+            end = self.row_end or self.row_start
+            return (
+                f"linha {self.row_start}"
+                if self.row_start == end
+                else f"linhas {self.row_start}-{end}"
+            )
+        return f"página {self.page}"
 
 
 class QuestionResponse(BaseModel):

@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 python-multipart
 python-dotenv
+bm25s>=0.3.9,<0.4
 docling
 langchain-chroma
 langchain-openai

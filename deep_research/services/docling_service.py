@@ -77,8 +77,9 @@ def create_chunks(content: bytes, filename: str) -> tuple[list[Document], int]:
 
 
 def count_chunk_tokens(chunks: list[Document]) -> list[int]:
-    tokenizer = get_docling_chunker().tokenizer
-    return [
-        tokenizer.count_tokens(text=chunk.page_content)
-        for chunk in chunks
-    ]
+    return [count_text_tokens(chunk.page_content) for chunk in chunks]
+
+
+def count_text_tokens(text: str) -> int:
+    """Conta tokens usando o mesmo tokenizer aplicado ao chunking dos documentos."""
+    return get_docling_chunker().tokenizer.count_tokens(text=text)

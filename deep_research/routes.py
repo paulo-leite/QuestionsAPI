@@ -46,12 +46,12 @@ def health() -> dict[str, str]:
 )
 def upload_document(file: UploadFile = File(...)) -> UploadResponse:
     filename = file.filename or "documento.pdf"
-    if not filename.lower().endswith(".pdf"):
-        raise ApplicationError("Envie um arquivo PDF.", 415)
+    if not filename.lower().endswith((".pdf", ".csv")):
+        raise ApplicationError("Envie um arquivo PDF ou CSV.", 415)
 
     content = file.file.read(MAX_FILE_SIZE + 1)
     if len(content) > MAX_FILE_SIZE:
-        raise ApplicationError("O PDF deve ter no máximo 20 MB.", 413)
+        raise ApplicationError("O arquivo deve ter no máximo 20 MB.", 413)
     return prepare_document(content, filename)
 
 

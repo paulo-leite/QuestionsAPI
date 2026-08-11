@@ -1,6 +1,6 @@
 # Fluxos de pesquisa em documentos
 
-### Este projeto oferece dois modos de consulta, ambos baseados exclusivamente no PDF enviado. Não existe busca na web.
+### Este projeto oferece dois modos de consulta, ambos baseados exclusivamente no PDF ou CSV enviado. Não existe busca na web.
 
 ### - **Resposta rápida:** uma única recuperação RAG para uma pergunta objetiva.
 ### - **Pesquisa aprofundada:** planejamento, pesquisas paralelas, avaliação de suficiência, refinamento opcional e redação final.
@@ -11,11 +11,11 @@
 
 ### Passo a passo
 
-### 1. `routes.upload_document` valida a extensão `.pdf` e o limite de 20 MB.
+### 1. `routes.upload_document` valida as extensões `.pdf`/`.csv` e o limite de 20 MB.
 ### 2. `document_service.prepare_document` coordena o processamento.
-### 3. `docling_service.create_chunks` converte o PDF com Docling.
-### 4. O `HybridChunker` cria trechos de até 512 tokens, preservando estrutura, páginas e origem.
-### 5. `embedding_service` gera os embeddings dos trechos.
+### 3. PDFs usam o `DocumentConverter`; CSVs usam parsing e chunking manual por linhas.
+### 4. O serviço escolhido cria trechos de até 512 tokens, preservando páginas do PDF ou intervalos de linhas do CSV.
+### 5. `embedding_service` gera os embeddings em lotes configuráveis, com timeout e retentativas.
 ### 6. `vectorstore_service.index_chunks` cria uma coleção Chroma isolada.
 ### 7. A coleção é associada a um `document_id` mantido em memória.
 ### 8. O endpoint devolve o identificador e métricas do processamento.
@@ -205,7 +205,7 @@ Content-Type: application/json
 | `deep_research/agents/sufficiency_agent.py` | Avaliação das evidências acumuladas |
 | `deep_research/agents/refinement_agent.py` | Plano de busca complementar |
 | `deep_research/agents/writer_agent.py` | Revisão e resposta final |
-| `deep_research/services/document_service.py` | Preparação e indexação do PDF |
+| `deep_research/services/document_service.py` | Preparação e indexação de PDFs e CSVs |
 | `deep_research/services/docling_service.py` | Conversão, chunks e tokens |
 | `deep_research/services/embedding_service.py` | Embeddings externos |
 | `deep_research/services/vectorstore_service.py` | Coleções Chroma em memória |

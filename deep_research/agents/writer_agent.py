@@ -38,11 +38,16 @@ def review_findings(findings: list[ResearchFinding]) -> ResearchReview:
 
 
 def deduplicate_sources(findings: list[ResearchFinding]) -> list[Source]:
-    seen: set[tuple[int, str]] = set()
+    seen: set[tuple[int | None, int | None, int | None, str]] = set()
     sources: list[Source] = []
     for finding in findings:
         for source in finding.sources:
-            key = (source.page, source.excerpt)
+            key = (
+                source.page,
+                source.row_start,
+                source.row_end,
+                source.excerpt,
+            )
             if key not in seen:
                 seen.add(key)
                 sources.append(source)
@@ -61,7 +66,7 @@ def write_report(
     evidence = "\n\n".join(
         f"Subpergunta: {finding.subquestion}\n"
         f"Conclusão: {finding.answer}\n"
-        f"Fontes: {', '.join(f'página {s.page}' for s in finding.sources)}"
+        f"Fontes: {', '.join(s.location_label() for s in finding.sources)}"
         for finding in supported
     )
     prompt = ChatPromptTemplate.from_messages(
@@ -69,7 +74,7 @@ def write_report(
             (
                 "system",
                 "Redija em português usando somente os achados e fontes recebidos. "
-                "Inclua as páginas, não invente informações e não use a web. "
+                "Inclua as páginas ou linhas, não invente informações e não use a web. "
                 "Quando a avaliação indicar insuficiência, declare claramente "
                 "as limitações e não apresente lacunas como fatos.",
             ),
