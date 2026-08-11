@@ -2,7 +2,7 @@
 
 ### Este projeto oferece dois modos de consulta, ambos baseados exclusivamente no PDF ou CSV enviado. Não existe busca na web.
 
-### - **Resposta rápida:** uma única recuperação RAG para uma pergunta objetiva.
+### - **Resposta rápida:** uma única recuperação RAG híbrida para uma pergunta objetiva.
 ### - **Pesquisa aprofundada:** planejamento, pesquisas paralelas, avaliação de suficiência, refinamento opcional e redação final.
 
 ## 1. Preparação do documento
@@ -22,6 +22,8 @@
 
 ### O armazenamento atual não é persistente. Reiniciar a aplicação remove as coleções e invalida os identificadores existentes.
 
+### O índice BM25S não é criado durante o upload. Na implementação atual, ele é montado sob demanda a partir dos chunks da coleção Chroma em cada consulta.
+
 ## 2. Resposta rápida
 
 ### Endpoint: `POST /questions`
@@ -40,13 +42,32 @@
 ### Passo a passo
 
 ### 1. A rota localiza a coleção Chroma pelo `document_id`.
-### 2. `rag_service.answer_from_vectorstore` executa busca por similaridade.
-### 3. São recuperados até 10 chunks candidatos.
-### 4. `rerank_service.rerank_documents` envia os candidatos ao serviço de reranking.
-### 5. Os 2 chunks mais relevantes formam o contexto final.
-### 6. O LLM recebe somente esse contexto e a pergunta.
-### 7. O prompt impede uso de conhecimento externo e exige que informações ausentes sejam declaradas.
-### 8. A API devolve a resposta e as páginas utilizadas.
+### 2. `rag_service.answer_from_vectorstore` executa duas recuperações complementares.
+### 3. A busca vetorial usa MMR no Chroma: avalia até 30 resultados e seleciona até 10 chunks semanticamente relevantes e diversos.
+### 4. `rag_service.keyword_search` lê os chunks da coleção e normaliza caixa e acentos.
+### 5. O tokenizador do BM25S remove stopwords em português e cria o índice lexical esparso.
+### 6. O BM25S recupera até 10 chunks com correspondência lexical, favorecendo termos exatos, nomes, números, códigos e siglas.
+### 7. `_merge_unique_documents` combina os candidatos vetoriais e lexicais, removendo chunks repetidos.
+### 8. `rerank_service.rerank_documents` envia os candidatos únicos ao serviço de reranking.
+### 9. Até 5 chunks mais relevantes formam o contexto final.
+### 10. O LLM recebe somente esse contexto e a pergunta.
+### 11. O prompt exige resposta direta, referências de página ou linha, identificação de inferências e declaração de evidência insuficiente.
+### 12. A API devolve a resposta e as páginas ou intervalos de linhas utilizados.
+
+## 2.1 Recuperação híbrida
+
+### A recuperação combina sinais diferentes antes do reranking:
+
+| Etapa | Tecnologia | Principal contribuição |
+|---|---|---|
+| Busca vetorial | Chroma com MMR | Similaridade semântica e diversidade entre os chunks |
+| Busca lexical | BM25S | Correspondência exata e importância estatística dos termos |
+| Fusão | Deduplicação por conteúdo e metadados | União dos dois conjuntos sem repetir evidências |
+| Seleção final | Serviço de reranking | Comparação dos candidatos com a pergunta completa |
+
+### O BM25S usa `k1 = 1.5` e `b = 0.75`. A consulta e os chunks são convertidos para minúsculas, têm seus acentos removidos e são tokenizados com stopwords portuguesas. Resultados lexicais com pontuação zero são descartados.
+
+### Essa combinação permite que a busca vetorial encontre trechos conceitualmente relacionados enquanto o BM25S recupera ocorrências que embeddings podem subestimar, como identificadores, termos técnicos e valores específicos.
 
 ### Saída
 
@@ -210,7 +231,7 @@ Content-Type: application/json
 | `deep_research/services/embedding_service.py` | Embeddings externos |
 | `deep_research/services/vectorstore_service.py` | Coleções Chroma em memória |
 | `deep_research/services/rerank_service.py` | Reranking dos chunks candidatos |
-| `deep_research/services/rag_service.py` | Recuperação e resposta baseada no contexto |
+| `deep_research/services/rag_service.py` | Busca híbrida com Chroma/MMR e BM25S, fusão de candidatos e resposta baseada no contexto |
 | `deep_research/services/llm_service.py` | Configuração e cache do LLM |
 
 ## 7. Escolha do modo
