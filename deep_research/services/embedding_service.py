@@ -1,6 +1,5 @@
 """Integração com o serviço externo de embeddings."""
 
-import os
 from functools import lru_cache
 
 from langchain_core.embeddings import Embeddings
@@ -16,8 +15,11 @@ from deep_research.config import (
 from deep_research.errors import ApplicationError
 
 
-class JinaEmbeddings(Embeddings):
+class OpenAICompatibleEmbeddings(Embeddings):
+    """Embeddings configuráveis expostos por uma API compatível com OpenAI."""
+
     def __init__(self) -> None:
+        self.model = EMBEDDING_MODEL
         self.client = OpenAI(
             base_url=require_env("LLM_BASE_URL"),
             api_key=require_env("LLM_API_KEY"),
@@ -34,13 +36,11 @@ class JinaEmbeddings(Embeddings):
             raise RuntimeError("EMBEDDING_BATCH_SIZE deve ser maior que zero.")
 
         embeddings: list[list[float]] = []
-        # model = os.getenv("EMBEDDING_MODEL", EMBEDDING_MODEL)
-        model = "nomic-embed-text-v1.5"
         try:
             for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
                 batch = texts[start:start + EMBEDDING_BATCH_SIZE]
                 response = self.client.embeddings.create(
-                    model=model,
+                    model=self.model,
                     input=batch,
                 )
                 ordered = sorted(response.data, key=lambda item: item.index)
@@ -74,5 +74,6 @@ class JinaEmbeddings(Embeddings):
 
 
 @lru_cache(maxsize=1)
-def get_embeddings() -> JinaEmbeddings:
-    return JinaEmbeddings()
+def get_embedding_service() -> OpenAICompatibleEmbeddings:
+    """Retorna o adaptador de embeddings configurado para a aplicação."""
+    return OpenAICompatibleEmbeddings()

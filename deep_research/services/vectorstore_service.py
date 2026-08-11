@@ -6,7 +6,7 @@ from uuid import uuid4
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
-from .embedding_service import get_embeddings
+from .embedding_service import get_embedding_service
 
 
 vectorstores: dict[str, Chroma] = {}
@@ -17,7 +17,7 @@ def index_chunks(chunks: list[Document]) -> str:
     document_id = str(uuid4())
     vectorstore = Chroma.from_documents(
         documents=chunks,
-        embedding=get_embeddings(),
+        embedding=get_embedding_service(),
         collection_name=f"document_{document_id.replace('-', '')}",
     )
     with _lock:
