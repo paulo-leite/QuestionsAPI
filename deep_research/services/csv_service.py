@@ -5,10 +5,7 @@ from io import StringIO
 
 from langchain_core.documents import Document
 
-from deep_research.config import DOCLING_MAX_TOKENS
 from deep_research.errors import ApplicationError
-
-from .docling_service import count_text_tokens
 
 
 def _decode_csv(content: bytes) -> str:
@@ -58,25 +55,6 @@ def _format_row(headers: list[str], values: list[str], row_number: int) -> str:
     return f"Linha {row_number}\n" + "\n".join(cells)
 
 
-def _split_oversized_text(text: str) -> list[str]:
-    """Divide uma linha grande sem ultrapassar o limite configurado de tokens."""
-    parts: list[str] = []
-    remaining = text
-    while remaining:
-        low, high = 1, len(remaining)
-        best = 1
-        while low <= high:
-            middle = (low + high) // 2
-            if count_text_tokens(remaining[:middle]) <= DOCLING_MAX_TOKENS:
-                best = middle
-                low = middle + 1
-            else:
-                high = middle - 1
-        parts.append(remaining[:best])
-        remaining = remaining[best:]
-    return parts
-
-
 def _new_document(
     text: str,
     filename: str,
@@ -97,7 +75,7 @@ def _new_document(
 
 
 def create_csv_chunks(content: bytes, filename: str) -> tuple[list[Document], int]:
-    """Lê o CSV e agrupa linhas completas dentro do limite de tokens."""
+    """Lê o CSV e cria exatamente um chunk para cada linha de dados."""
     text = _decode_csv(content)
     if not text.strip() or "\x00" in text:
         raise ApplicationError("O CSV está vazio ou possui conteúdo inválido.", 422)
@@ -123,46 +101,13 @@ def create_csv_chunks(content: bytes, filename: str) -> tuple[list[Document], in
             "O CSV não possui linhas de dados utilizáveis.", 422
         )
 
-    chunks: list[Document] = []
-    current: list[str] = []
-    current_start = data_rows[0][0]
-    current_end = current_start
-
-    for row_number, values in data_rows:
-        row_text = _format_row(headers, values, row_number)
-        if count_text_tokens(row_text) > DOCLING_MAX_TOKENS:
-            if current:
-                chunks.append(
-                    _new_document(
-                        "\n\n".join(current), filename, current_start, current_end
-                    )
-                )
-                current = []
-            chunks.extend(
-                _new_document(part, filename, row_number, row_number)
-                for part in _split_oversized_text(row_text)
-            )
-            continue
-
-        candidate = "\n\n".join([*current, row_text])
-        if current and count_text_tokens(candidate) > DOCLING_MAX_TOKENS:
-            chunks.append(
-                _new_document(
-                    "\n\n".join(current), filename, current_start, current_end
-                )
-            )
-            current = [row_text]
-            current_start = row_number
-        else:
-            if not current:
-                current_start = row_number
-            current.append(row_text)
-        current_end = row_number
-
-    if current:
-        chunks.append(
-            _new_document(
-                "\n\n".join(current), filename, current_start, current_end
-            )
+    chunks = [
+        _new_document(
+            _format_row(headers, values, row_number),
+            filename,
+            row_number,
+            row_number,
         )
+        for row_number, values in data_rows
+    ]
     return chunks, len(data_rows)
