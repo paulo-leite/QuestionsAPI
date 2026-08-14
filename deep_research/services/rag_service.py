@@ -147,7 +147,7 @@ def answer_from_vectorstore(
         question,
         k=RETRIEVAL_CANDIDATES,
         fetch_k=RETRIEVAL_CANDIDATES * 3,
-        lambda_mult=0.7,
+        lambda_mult=0.9,
     )
     keyword_candidates = keyword_search(
         vectorstore,
