@@ -30,6 +30,7 @@ def index_chunks(chunks: list[Document]) -> str:
     )
     with _lock:
         vectorstores[document_id] = vectorstore
+
     return document_id
 
 

@@ -9,12 +9,13 @@ from deep_research.routes import router
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="API de pesquisa profunda em documentos",
+        title="API de pesquisa documental e qualidade de dados",
         description=(
             "Pesquisa adaptativa com triagem, esclarecimento, verificação de "
-            "suficiência e refinamento, baseada exclusivamente no PDF ou CSV enviado."
+            "suficiência e refinamento em documentos, além de auditoria automática "
+            "e explicável da qualidade de arquivos CSV."
         ),
-        version="4.0.0",
+        version="5.0.0",
     )
     application.include_router(router)
 

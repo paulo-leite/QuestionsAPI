@@ -6,6 +6,39 @@ Accept: application/json
 
 ###
 
+# No fluxo principal, arquivos CSV enviado para /documents é auditado
+# automaticamente antes da indexação. O relatório vem em data_quality.
+POST {{baseUrl}}/documents
+Content-Type: multipart/form-data; boundary=DocumentBoundary
+
+--DocumentBoundary
+Content-Disposition: form-data; name="file"; filename="dados_atuais.csv"
+Content-Type: text/csv
+
+< ./dados_atuais.csv
+--DocumentBoundary--
+
+###
+
+# Selecione um CSV no diálogo do IDE. O segundo arquivo é opcional e serve
+# como baseline para detectar drift e mudanças de esquema/distribuição.
+POST {{baseUrl}}/data-quality/analyze
+Content-Type: multipart/form-data; boundary=DataQualityBoundary
+
+--DataQualityBoundary
+Content-Disposition: form-data; name="file"; filename="dados_atuais.csv"
+Content-Type: text/csv
+
+< ./dados_atuais.csv
+--DataQualityBoundary
+Content-Disposition: form-data; name="reference_file"; filename="dados_referencia.csv"
+Content-Type: text/csv
+
+< ./dados_referencia.csv
+--DataQualityBoundary--
+
+###
+
 POST {{baseUrl}}/questions
 Content-Type: application/json
 

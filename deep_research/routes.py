@@ -9,6 +9,8 @@ from deep_research.config import GUARDRAIL_MAX_QUESTION_CHARS, MAX_FILE_SIZE
 from deep_research.errors import ApplicationError
 from deep_research.models import (
     ClarificationAnswer,
+    DataQualityReport,
+    DocumentUploadResponse,
     QuestionRequest,
     QuestionResponse,
     ResearchRequest,
@@ -18,6 +20,7 @@ from deep_research.models import (
 )
 from deep_research.research_manager import research_manager
 from deep_research.services.document_service import prepare_document
+from deep_research.services.data_quality_service import analyze_csv_quality
 from deep_research.services.rag_service import answer_from_vectorstore
 from deep_research.services.vectorstore_service import get_vectorstore
 
@@ -41,10 +44,10 @@ def health() -> dict[str, str]:
 
 @router.post(
     "/documents",
-    response_model=UploadResponse,
+    response_model=DocumentUploadResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def upload_document(file: UploadFile = File(...)) -> UploadResponse:
+def upload_document(file: UploadFile = File(...)) -> DocumentUploadResponse:
     filename = file.filename or "documento.pdf"
     if not filename.lower().endswith((".pdf", ".csv")):
         raise ApplicationError("Envie um arquivo PDF ou CSV.", 415)
@@ -52,7 +55,51 @@ def upload_document(file: UploadFile = File(...)) -> UploadResponse:
     content = file.file.read(MAX_FILE_SIZE + 1)
     if len(content) > MAX_FILE_SIZE:
         raise ApplicationError("O arquivo deve ter no máximo 20 MB.", 413)
-    return prepare_document(content, filename)
+
+    data_quality = (
+        analyze_csv_quality(content, filename)
+        if filename.lower().endswith(".csv")
+        else None
+    )
+    upload = prepare_document(content, filename)
+    return DocumentUploadResponse(
+        **upload.model_dump(),
+        data_quality=data_quality,
+    )
+
+
+@router.post("/data-quality/analyze", response_model=DataQualityReport)
+def analyze_data_quality(
+    file: UploadFile = File(...),
+    reference_file: UploadFile | None = File(default=None),
+) -> DataQualityReport:
+    """Audita um CSV e, opcionalmente, compara-o com um CSV de referência."""
+    filename = file.filename or "dados.csv"
+    if not filename.lower().endswith(".csv"):
+        raise ApplicationError("A análise de qualidade aceita arquivos CSV.", 415)
+
+    content = file.file.read(MAX_FILE_SIZE + 1)
+    if len(content) > MAX_FILE_SIZE:
+        raise ApplicationError("O arquivo deve ter no máximo 20 MB.", 413)
+
+    reference_content = None
+    reference_filename = None
+    if reference_file is not None:
+        reference_filename = reference_file.filename or "referencia.csv"
+        if not reference_filename.lower().endswith(".csv"):
+            raise ApplicationError("O arquivo de referência deve ser CSV.", 415)
+        reference_content = reference_file.file.read(MAX_FILE_SIZE + 1)
+        if len(reference_content) > MAX_FILE_SIZE:
+            raise ApplicationError(
+                "O arquivo de referência deve ter no máximo 20 MB.", 413
+            )
+
+    return analyze_csv_quality(
+        content,
+        filename,
+        reference_content=reference_content,
+        reference_filename=reference_filename,
+    )
 
 
 @router.post("/questions", response_model=QuestionResponse)

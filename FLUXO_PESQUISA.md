@@ -233,6 +233,16 @@ Content-Type: application/json
 | `deep_research/services/rerank_service.py` | Reranking dos chunks candidatos |
 | `deep_research/services/rag_service.py` | Busca híbrida com Chroma/MMR e BM25S, fusão de candidatos e resposta baseada no contexto |
 | `deep_research/services/llm_service.py` | Configuração e cache do LLM |
+| `deep_research/services/data_quality_service.py` | Orquestra a auditoria de CSV e monta o relatório de qualidade |
+| `deep_research/services/data_quality/core.py` | Parsing, tipos e utilitários compartilhados da auditoria |
+| `deep_research/services/data_quality/profiling.py` | Perfil de colunas, completude, IQR e categorias raras |
+| `deep_research/services/data_quality/validity.py` | Validade estrutural e de formatos com Pandera |
+| `deep_research/services/data_quality/consistency.py` | Consistência entre colunas e fontes com Pandera e Pandas |
+| `deep_research/services/data_quality/outliers.py` | Atipicidade multivariada com Isolation Forest |
+| `deep_research/services/data_quality/categorical.py` | Similaridade categórica com RapidFuzz |
+| `deep_research/services/data_quality/duplicates.py` | Duplicidade exata e candidatos aproximados com Splink |
+| `deep_research/services/data_quality/drift.py` | Mudanças temporais e drift com Evidently |
+| `deep_research/services/data_quality/dimensions.py` | Consolidação do estado de cada dimensão |
 
 ## 7. Escolha do modo
 

@@ -1,4 +1,6 @@
-"""Modelos usados nas rotas e no pipeline de pesquisa."""
+"""Modelos usados nas rotas, pesquisa e auditoria de dados."""
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -137,3 +139,77 @@ class ResearchState(BaseModel):
         """Registra a resposta e indica se ainda existem perguntas pendentes."""
         self.clarification_responses.append(answer)
         return len(self.clarification_responses) < len(self.clarification_questions)
+
+
+class DataQualityTopValue(BaseModel):
+    value: str
+    count: int
+    percentage: float
+
+
+class DataQualityColumnProfile(BaseModel):
+    name: str
+    inferred_type: str
+    type_confidence: float
+    non_missing_count: int
+    missing_count: int
+    missing_percentage: float
+    distinct_count: int
+    distinct_percentage: float
+    minimum: float | str | None = None
+    maximum: float | str | None = None
+    mean: float | None = None
+    median: float | None = None
+    standard_deviation: float | None = None
+    outlier_count: int = 0
+    top_values: list[DataQualityTopValue] = Field(default_factory=list)
+
+
+class DataQualityFinding(BaseModel):
+    finding_id: str
+    dimension: str
+    severity: Literal["baixa", "media", "alta"]
+    confidence: float = Field(ge=0, le=1)
+    scope: str
+    title: str
+    description: str
+    evidence: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    recommendation: str
+    limitations: str | None = None
+
+
+class DataQualityDimensionResult(BaseModel):
+    dimension: str
+    status: Literal["aprovada", "atencao", "critica", "nao_avaliada"]
+    findings_count: int
+    high_severity_count: int
+    summary: str
+
+
+class DataQualityDatasetSummary(BaseModel):
+    rows: int
+    columns: int
+    cells: int
+    missing_cells: int
+    missing_percentage: float
+    exact_duplicate_rows: int
+
+
+class DataQualityReport(BaseModel):
+    analysis_version: str
+    validation_engines: list[str]
+    filename: str
+    reference_filename: str | None = None
+    dataset: DataQualityDatasetSummary
+    dimensions: list[DataQualityDimensionResult]
+    columns: list[DataQualityColumnProfile]
+    findings: list[DataQualityFinding]
+    findings_by_severity: dict[str, int]
+    limitations: list[str]
+
+
+class DocumentUploadResponse(UploadResponse):
+    """Resultado do upload, incluindo a auditoria automática para CSVs."""
+
+    data_quality: DataQualityReport | None = None
