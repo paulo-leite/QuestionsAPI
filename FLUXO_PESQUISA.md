@@ -11,7 +11,7 @@
 
 ### Passo a passo
 
-### 1. `routes.upload_document` valida as extensões `.pdf`/`.csv` e o limite de 20 MB.
+### 1. `routes.upload_document` valida as extensões `.pdf`/`.csv`, o limite de 20 MB e um `reference_file` CSV opcional quando o documento principal também é CSV.
 ### 2. `document_service.prepare_document` coordena o processamento.
 ### 3. PDFs usam o `DocumentConverter`; CSVs usam parsing e chunking manual por linhas.
 ### 4. O serviço escolhido cria trechos de até 512 tokens, preservando páginas do PDF ou intervalos de linhas do CSV.

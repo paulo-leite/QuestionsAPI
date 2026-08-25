@@ -430,7 +430,7 @@ O diferencial do auditor não será a quantidade de testes disponíveis, mas sua
 
 ## 13. Implementação automática disponível
 
-A análise está integrada ao fluxo principal: todo CSV enviado para `POST /documents` é auditado automaticamente antes da indexação, e o relatório é retornado no campo `data_quality` junto com o `document_id`. PDFs seguem o fluxo documental sem auditoria tabular e retornam `data_quality: null`.
+A análise está integrada ao fluxo principal: todo CSV enviado para `POST /documents` é auditado automaticamente antes da indexação, e o relatório é retornado no campo `data_quality` junto com o `document_id`. A mesma requisição pode incluir um `reference_file` CSV opcional para habilitar consistência entre fontes e comportamento temporal. PDFs seguem o fluxo documental sem auditoria tabular, não aceitam referência e retornam `data_quality: null`.
 
 O motor de validade utiliza [Pandera](https://pandera.readthedocs.io/en/stable/) em modo `lazy`, permitindo coletar todas as incompatibilidades de formato antes de produzir os achados. Na dimensão de consistência, o Pandera também valida relações entre pares de datas e limites numéricos, enquanto o Pandas agrupa atributos por entidade e reconcilia valores entre o CSV atual e a referência. O [scikit-learn](https://scikit-learn.org/stable/modules/outlier_detection.html) executa `IsolationForest` para sinalizar combinações numéricas incomuns; o [RapidFuzz](https://rapidfuzz.github.io/RapidFuzz/) compara grafias de categorias; e o [Splink](https://moj-analytical-services.github.io/splink/) gera candidatos a duplicatas aproximadas por bloqueio exato e similaridade Jaro-Winkler. Quando existe CSV de referência, o [Evidently](https://docs.evidentlyai.com/metrics/preset_data_drift) executa `DataDriftPreset` sobre colunas numéricas e categóricas elegíveis. O motor nativo permanece responsável pelo parsing, inferência semântica de colunas, completude, IQR, duplicidade exata, mudanças de esquema e variação na taxa de ausência.
 
@@ -470,10 +470,11 @@ No fluxo principal, basta enviar o CSV normalmente:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/documents \
-  -F "file=@dados_atuais.csv;type=text/csv"
+  -F "file=@dados_atuais.csv;type=text/csv" \
+  -F "reference_file=@dados_referencia.csv;type=text/csv"
 ```
 
-Esse fluxo executa completude, validade, consistência, atipicidade, qualidade categórica e duplicidade. Como não recebe um baseline, `comportamento_temporal` permanece como não avaliado.
+Esse fluxo sempre executa completude, validade, consistência, atipicidade, qualidade categórica e duplicidade. Quando `reference_file` é enviado, também executa consistência entre fontes e comportamento temporal; sem referência, `comportamento_temporal` permanece como não avaliado.
 
 Para incluir comparação temporal, use a rota especializada abaixo.
 

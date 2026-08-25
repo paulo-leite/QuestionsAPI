@@ -1,6 +1,7 @@
 """Rotas HTTP da API de documentos e pesquisa."""
 
 import asyncio
+from typing import Annotated
 
 from fastapi import APIRouter, File, UploadFile, status
 
@@ -16,7 +17,6 @@ from deep_research.models import (
     ResearchRequest,
     ResearchResponse,
     ResearchState,
-    UploadResponse,
 )
 from deep_research.research_manager import research_manager
 from deep_research.services.document_service import prepare_document
@@ -26,6 +26,23 @@ from deep_research.services.vectorstore_service import get_vectorstore
 
 
 router = APIRouter()
+
+
+def _read_optional_csv_reference(
+    reference_file: UploadFile | None,
+) -> tuple[bytes | None, str | None]:
+    """Valida e lê um CSV de referência opcional dentro do limite da API."""
+    if reference_file is None:
+        return None, None
+    reference_filename = reference_file.filename or "referencia.csv"
+    if not reference_filename.lower().endswith(".csv"):
+        raise ApplicationError("O arquivo de referência deve ser CSV.", 415)
+    reference_content = reference_file.file.read(MAX_FILE_SIZE + 1)
+    if len(reference_content) > MAX_FILE_SIZE:
+        raise ApplicationError(
+            "O arquivo de referência deve ter no máximo 20 MB.", 413
+        )
+    return reference_content, reference_filename
 
 
 def require_vectorstore(document_id: str):
@@ -47,7 +64,11 @@ def health() -> dict[str, str]:
     response_model=DocumentUploadResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def upload_document(file: UploadFile = File(...)) -> DocumentUploadResponse:
+def upload_document(
+    file: UploadFile = File(...),
+    reference_file: Annotated[UploadFile | None, File()] = None,
+) -> DocumentUploadResponse:
+    """Prepara um documento e audita CSVs contra uma referência opcional."""
     filename = file.filename or "documento.pdf"
     if not filename.lower().endswith((".pdf", ".csv")):
         raise ApplicationError("Envie um arquivo PDF ou CSV.", 415)
@@ -56,11 +77,22 @@ def upload_document(file: UploadFile = File(...)) -> DocumentUploadResponse:
     if len(content) > MAX_FILE_SIZE:
         raise ApplicationError("O arquivo deve ter no máximo 20 MB.", 413)
 
-    data_quality = (
-        analyze_csv_quality(content, filename)
-        if filename.lower().endswith(".csv")
-        else None
+    is_csv = filename.lower().endswith(".csv")
+    if reference_file is not None and not is_csv:
+        raise ApplicationError(
+            "O arquivo de referência só pode ser usado com um documento CSV.", 422
+        )
+    reference_content, reference_filename = _read_optional_csv_reference(
+        reference_file
     )
+    data_quality = None
+    if is_csv:
+        data_quality = analyze_csv_quality(
+            content,
+            filename,
+            reference_content=reference_content,
+            reference_filename=reference_filename,
+        )
     upload = prepare_document(content, filename)
     return DocumentUploadResponse(
         **upload.model_dump(),
@@ -71,7 +103,7 @@ def upload_document(file: UploadFile = File(...)) -> DocumentUploadResponse:
 @router.post("/data-quality/analyze", response_model=DataQualityReport)
 def analyze_data_quality(
     file: UploadFile = File(...),
-    reference_file: UploadFile | None = File(default=None),
+    reference_file: Annotated[UploadFile | None, File()] = None,
 ) -> DataQualityReport:
     """Audita um CSV e, opcionalmente, compara-o com um CSV de referência."""
     filename = file.filename or "dados.csv"
@@ -82,17 +114,9 @@ def analyze_data_quality(
     if len(content) > MAX_FILE_SIZE:
         raise ApplicationError("O arquivo deve ter no máximo 20 MB.", 413)
 
-    reference_content = None
-    reference_filename = None
-    if reference_file is not None:
-        reference_filename = reference_file.filename or "referencia.csv"
-        if not reference_filename.lower().endswith(".csv"):
-            raise ApplicationError("O arquivo de referência deve ser CSV.", 415)
-        reference_content = reference_file.file.read(MAX_FILE_SIZE + 1)
-        if len(reference_content) > MAX_FILE_SIZE:
-            raise ApplicationError(
-                "O arquivo de referência deve ter no máximo 20 MB.", 413
-            )
+    reference_content, reference_filename = _read_optional_csv_reference(
+        reference_file
+    )
 
     return analyze_csv_quality(
         content,
