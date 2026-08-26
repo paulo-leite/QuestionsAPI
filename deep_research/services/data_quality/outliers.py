@@ -15,6 +15,51 @@ MAX_MULTIVARIATE_COLUMNS = 20
 MULTIVARIATE_N_ESTIMATORS = 200
 MULTIVARIATE_RANDOM_STATES = (42, 137, 997)
 MIN_ANOMALY_VOTE_RATIO = 2 / 3
+MIN_OUTLIER_VALUES = 8
+
+
+def check_univariate(
+    table: ParsedTable,
+    profiles: list[DataQualityColumnProfile],
+    context: AnalysisContext,
+) -> None:
+    """Detecta valores numéricos fora de 1,5 IQR e atualiza os perfis."""
+    indexes = {name: index for index, name in enumerate(table.headers)}
+    for profile in profiles:
+        if profile.inferred_type != "numerico":
+            continue
+        numeric_rows = [
+            (row.number, parsed)
+            for row in table.rows
+            if (parsed := parse_number(row.values[indexes[profile.name]])) is not None
+        ]
+        numeric_values = [value for _, value in numeric_rows]
+        if len(numeric_values) < MIN_OUTLIER_VALUES or len(set(numeric_values)) < 4:
+            continue
+        context.evaluated_dimensions.add("atipicidade")
+        sorted_values = sorted(numeric_values)
+        q1, q3 = percentile(sorted_values, 0.25), percentile(sorted_values, 0.75)
+        iqr = q3 - q1
+        if iqr <= 0:
+            continue
+        lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        outlier_rows = [
+            (row, value)
+            for row, value in numeric_rows
+            if value < lower or value > upper
+        ]
+        profile.outlier_count = len(outlier_rows)
+        if not outlier_rows:
+            continue
+        context.add_finding(
+            dimension="atipicidade", severity="baixa", confidence=0.85,
+            scope=f"coluna:{profile.name}", title=f"Valores atípicos em {profile.name}",
+            description=f"Foram sinalizados {len(outlier_rows)} valores fora dos limites calculados pelo intervalo interquartil.",
+            evidence=[f"linha {row}: {value:g}" for row, value in outlier_rows],
+            metrics={"method": "IQR_1.5", "lower_bound": round(lower, 6), "upper_bound": round(upper, 6), "outlier_count": len(outlier_rows)},
+            recommendation="Revisar os registros no contexto do domínio antes de corrigir ou remover valores.",
+            limitations="Valor atípico não é necessariamente erro; sazonalidade e segmentos não são considerados neste teste.",
+        )
 
 
 def check_multivariate(table: ParsedTable, profiles: list[DataQualityColumnProfile], context: AnalysisContext) -> None:

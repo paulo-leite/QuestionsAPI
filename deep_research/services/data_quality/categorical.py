@@ -1,5 +1,7 @@
 """Avaliações da qualidade de valores categóricos."""
 
+from collections import Counter
+
 from rapidfuzz import fuzz, utils
 
 from deep_research.models import DataQualityColumnProfile
@@ -8,6 +10,43 @@ from .core import AnalysisContext, ParsedTable, is_missing
 
 RAPIDFUZZ_SIMILARITY_THRESHOLD = 90.0
 MAX_RAPIDFUZZ_CATEGORIES = 50
+
+
+def check_rare_categories(
+    table: ParsedTable,
+    profiles: list[DataQualityColumnProfile],
+    context: AnalysisContext,
+) -> None:
+    """Sinaliza categorias textuais com uma única ocorrência."""
+    indexes = {name: index for index, name in enumerate(table.headers)}
+    for profile in profiles:
+        if profile.inferred_type != "texto":
+            continue
+        values = [
+            row.values[indexes[profile.name]]
+            for row in table.rows
+            if not is_missing(row.values[indexes[profile.name]])
+        ]
+        distinct = profile.distinct_count
+        if not (len(values) >= 20 >= distinct >= 2):
+            continue
+        context.evaluated_dimensions.add("qualidade_categorica")
+        rare = [
+            (value, count)
+            for value, count in Counter(values).items()
+            if count == 1
+        ]
+        if not rare:
+            continue
+        context.add_finding(
+            dimension="qualidade_categorica", severity="baixa", confidence=0.65,
+            scope=f"coluna:{profile.name}", title=f"Categorias raras em {profile.name}",
+            description=f"Foram encontradas {len(rare)} categorias com uma única ocorrência.",
+            evidence=[f"{value}: {count} ocorrência" for value, count in rare],
+            metrics={"rare_category_count": len(rare), "distinct_count": distinct},
+            recommendation="Comparar as categorias com o vocabulário autorizado e verificar grafias equivalentes.",
+            limitations="Raridade não comprova invalidade; o teste não possui vocabulário de domínio.",
+        )
 
 
 def check_category_similarity(table: ParsedTable, profiles: list[DataQualityColumnProfile], context: AnalysisContext) -> None:

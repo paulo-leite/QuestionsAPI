@@ -1,6 +1,7 @@
 """Testes do analisador automático de qualidade de dados."""
 
 import unittest
+from unittest.mock import patch
 
 from deep_research.services.data_quality_service import analyze_csv_quality
 
@@ -82,6 +83,58 @@ class DataQualityAnalysisTest(unittest.TestCase):
         self.assertNotIn("score", payload)
         self.assertEqual(len(report.dimensions), 8)
         self.assertIn("pandera", report.validation_engines)
+
+    def test_evidently_manages_column_profile_metrics(self) -> None:
+        content = b"""amount,category
+1,a
+2,a
+null,
+4,b
+4,b
+"""
+
+        report = analyze_csv_quality(content, "profiles.csv")
+        profiles = {profile.name: profile for profile in report.columns}
+        amount = profiles["amount"]
+        category = profiles["category"]
+
+        self.assertIn("evidently", report.validation_engines)
+        self.assertEqual(amount.missing_count, 1)
+        self.assertEqual(amount.non_missing_count, 4)
+        self.assertEqual(amount.minimum, 1.0)
+        self.assertEqual(amount.maximum, 4.0)
+        self.assertEqual(amount.mean, 2.75)
+        self.assertEqual(amount.median, 3.0)
+        self.assertAlmostEqual(amount.standard_deviation, 1.299038)
+        self.assertEqual(category.distinct_count, 2)
+        self.assertEqual(
+            [(value.value, value.count) for value in category.top_values],
+            [("a", 2), ("b", 2)],
+        )
+        completeness = next(
+            finding for finding in report.findings
+            if finding.dimension == "completude"
+            and finding.scope == "coluna:amount"
+        )
+        self.assertEqual(completeness.metrics["validation_engine"], "evidently")
+
+    @patch(
+        "deep_research.services.data_quality.profiling.Report.run",
+        side_effect=RuntimeError("indisponível"),
+    )
+    def test_profile_falls_back_to_native_engine(self, _run) -> None:
+        content = b"amount,category\n1,a\n2,b\n"
+
+        with patch(
+            "deep_research.services.data_quality.profiling.warnings.warn"
+        ) as warn:
+            report = analyze_csv_quality(content, "fallback.csv")
+
+        warn.assert_called_once()
+        self.assertIn("native", report.validation_engines)
+        self.assertNotIn("evidently", report.validation_engines)
+        amount = next(profile for profile in report.columns if profile.name == "amount")
+        self.assertEqual(amount.mean, 1.5)
 
     def test_does_not_compare_mixed_timezone_dates(self) -> None:
         content = (

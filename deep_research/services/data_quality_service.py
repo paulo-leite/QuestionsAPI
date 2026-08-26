@@ -9,14 +9,14 @@ os.environ.setdefault("DO_NOT_TRACK", "1")
 
 from deep_research.models import DataQualityDatasetSummary, DataQualityReport
 
-from .data_quality.categorical import check_category_similarity
+from .data_quality.categorical import check_category_similarity, check_rare_categories
 from .data_quality.consistency import check_consistency, check_cross_source_consistency
 from .data_quality.core import AnalysisContext, is_missing, parse_csv, round_percentage
 from .data_quality.dimensions import build_dimension_results
 from .data_quality.drift import check_drift
 from .data_quality.duplicates import check_approximate_duplicates, check_exact_duplicates
-from .data_quality.outliers import check_multivariate
-from .data_quality.profiling import profile_column
+from .data_quality.outliers import check_multivariate, check_univariate
+from .data_quality.profiling import profile_columns
 from .data_quality.validity import check_formats, check_structural_rows
 
 
@@ -32,9 +32,12 @@ def analyze_csv_quality(
     context = AnalysisContext(findings=[], evaluated_dimensions=set())
 
     check_structural_rows(table, context)
-    profiles = [profile_column(table, index, context) for index in range(len(table.headers))]
+    profiling = profile_columns(table, context)
+    profiles = profiling.profiles
     check_formats(table, profiles, context)
+    check_univariate(table, profiles, context)
     check_multivariate(table, profiles, context)
+    check_rare_categories(table, profiles, context)
     check_category_similarity(table, profiles, context)
     check_consistency(table, context)
     duplicate_count = check_exact_duplicates(table, context)
@@ -56,12 +59,16 @@ def analyze_csv_quality(
         for severity in ("alta", "media", "baixa")
     }
     return DataQualityReport(
-        analysis_version="1.4.0",
-        validation_engines=(
-            ["pandera", "scikit-learn", "rapidfuzz", "splink", "evidently", "native"]
-            if reference is not None
-            else ["pandera", "scikit-learn", "rapidfuzz", "splink", "native"]
-        ),
+        analysis_version="1.5.0",
+        validation_engines=list(dict.fromkeys([
+            profiling.engine,
+            "pandera",
+            "scikit-learn",
+            "rapidfuzz",
+            "splink",
+            *(["evidently"] if reference is not None else []),
+            "native",
+        ])),
         filename=filename,
         reference_filename=reference_filename,
         dataset=DataQualityDatasetSummary(

@@ -432,7 +432,9 @@ O diferencial do auditor não será a quantidade de testes disponíveis, mas sua
 
 A análise está integrada ao fluxo principal: todo CSV enviado para `POST /documents` é auditado automaticamente antes da indexação, e o relatório é retornado no campo `data_quality` junto com o `document_id`. A mesma requisição pode incluir um `reference_file` CSV opcional para habilitar consistência entre fontes e comportamento temporal. PDFs seguem o fluxo documental sem auditoria tabular, não aceitam referência e retornam `data_quality: null`.
 
-O motor de validade utiliza [Pandera](https://pandera.readthedocs.io/en/stable/) em modo `lazy`, permitindo coletar todas as incompatibilidades de formato antes de produzir os achados. Na dimensão de consistência, o Pandera também valida relações entre pares de datas e limites numéricos, enquanto o Pandas agrupa atributos por entidade e reconcilia valores entre o CSV atual e a referência. O [scikit-learn](https://scikit-learn.org/stable/modules/outlier_detection.html) executa `IsolationForest` para sinalizar combinações numéricas incomuns; o [RapidFuzz](https://rapidfuzz.github.io/RapidFuzz/) compara grafias de categorias; e o [Splink](https://moj-analytical-services.github.io/splink/) gera candidatos a duplicatas aproximadas por bloqueio exato e similaridade Jaro-Winkler. Quando existe CSV de referência, o [Evidently](https://docs.evidentlyai.com/metrics/preset_data_drift) executa `DataDriftPreset` sobre colunas numéricas e categóricas elegíveis. O motor nativo permanece responsável pelo parsing, inferência semântica de colunas, completude, IQR, duplicidade exata, mudanças de esquema e variação na taxa de ausência.
+O perfilamento executa uma única instância do [Evidently](https://docs.evidentlyai.com/metrics/preset_data_summary) `DataSummaryPreset` por dataset. Antes da execução, números, datas e ausências são normalizados pelas regras locais e os tipos são declarados explicitamente. Um adaptador converte o snapshot para `DataQualityColumnProfile`; se o Evidently falhar, `NativeDatasetProfiler` preserva a análise com métricas exatas. O desvio-padrão populacional, a inferência de tipos e as evidências por linha continuam nativos para manter a semântica pública.
+
+O motor de validade utiliza [Pandera](https://pandera.readthedocs.io/en/stable/) em modo `lazy`, permitindo coletar todas as incompatibilidades de formato antes de produzir os achados. Na dimensão de consistência, o Pandera também valida relações entre pares de datas e limites numéricos, enquanto o Pandas agrupa atributos por entidade e reconcilia valores entre o CSV atual e a referência. O [scikit-learn](https://scikit-learn.org/stable/modules/outlier_detection.html) executa `IsolationForest` para sinalizar combinações numéricas incomuns; o [RapidFuzz](https://rapidfuzz.github.io/RapidFuzz/) compara grafias de categorias; e o [Splink](https://moj-analytical-services.github.io/splink/) gera candidatos a duplicatas aproximadas por bloqueio exato e similaridade Jaro-Winkler. Quando existe CSV de referência, o Evidently também executa `DataDriftPreset` sobre colunas numéricas e categóricas elegíveis. O motor nativo permanece responsável pelo parsing, inferência semântica de colunas, evidências de completude, IQR, categorias raras, duplicidade exata, mudanças de esquema e variação na taxa de ausência.
 
 A API também mantém o endpoint independente `POST /data-quality/analyze`, que recebe um CSV atual e, opcionalmente, um CSV histórico de referência. Essa segunda rota é útil para comparar períodos sem indexar o arquivo. Ambas as execuções são determinísticas e não dependem de LLM.
 
@@ -442,11 +444,11 @@ A API também mantém o endpoint independente `POST /data-quality/analyze`, que 
 
 | Arquivo | Dimensão ou papel | Biblioteca principal | Métodos de entrada |
 |---|---|---|---|
-| `profiling.py` | Completude, perfil estatístico, IQR univariado e categorias raras | Python `statistics` e `Counter` | `profile_column` |
+| `profiling.py` | Completude e perfil estatístico agregado | Evidently `DataSummaryPreset`, Pandas e fallback nativo | `profile_columns` |
 | `validity.py` | Validade estrutural e de formatos | Pandera e Pandas | `check_structural_rows`, `check_formats` |
 | `consistency.py` | Consistência entre colunas, entidades e fontes | Pandera e Pandas | `check_consistency`, `check_cross_source_consistency` |
-| `outliers.py` | Atipicidade multivariada | scikit-learn | `check_multivariate` |
-| `categorical.py` | Similaridade entre categorias | RapidFuzz | `check_category_similarity` |
+| `outliers.py` | Atipicidade univariada e multivariada | IQR nativo e scikit-learn | `check_univariate`, `check_multivariate` |
+| `categorical.py` | Raridade e similaridade entre categorias | `Counter` e RapidFuzz | `check_rare_categories`, `check_category_similarity` |
 | `duplicates.py` | Duplicidade exata e aproximada | Python nativo, Splink, DuckDB, RapidFuzz e Pandas | `check_exact_duplicates`, `check_approximate_duplicates` |
 | `drift.py` | Comportamento temporal | Evidently e Pandas | `check_drift` |
 | `dimensions.py` | Consolidação dos estados das oito dimensões | Python nativo | `build_dimension_results` |
@@ -454,12 +456,12 @@ A API também mantém o endpoint independente `POST /data-quality/analyze`, que 
 
 ### Métodos das dimensões
 
-- `profile_column` calcula ausências, tipo predominante, cardinalidade, valores frequentes e estatísticas. Também registra outliers por IQR e categorias de ocorrência única quando há amostra suficiente.
+- `profile_columns` normaliza o dataset, executa `DataSummaryPreset` uma única vez e adapta suas métricas ao contrato da API. `EvidentlyDatasetProfiler` usa `NativeDatasetProfiler` como base semântica e o substitui integralmente em caso de falha operacional.
 - `check_structural_rows` detecta linhas com largura diferente do cabeçalho; `check_formats` usa validação `lazy` do Pandera para reunir todas as células incompatíveis com o tipo inferido.
 - `check_consistency` executa três famílias de regras: ordem cronológica, coerência de limites numéricos e estabilidade de atributos por entidade. Os pares são inferidos apenas quando os cabeçalhos compartilham tokens semânticos completos.
 - `check_cross_source_consistency` agrupa valores por chave nos dois arquivos e compara somente entidades presentes em ambos. A referência é tratada como conjunto comparável, não como fonte de verdade.
-- `check_multivariate` seleciona colunas numéricas elegíveis, imputa ausências pela mediana e exige concordância de pelo menos dois entre três modelos `IsolationForest`.
-- `check_category_similarity` compara categorias de baixa cardinalidade com `WRatio` e registra pares a partir de 90% de similaridade.
+- `check_univariate` calcula limites de 1,5 IQR e preserva as linhas atípicas; `check_multivariate` seleciona colunas numéricas elegíveis, imputa ausências pela mediana e exige concordância de pelo menos dois entre três modelos `IsolationForest`.
+- `check_rare_categories` registra categorias de ocorrência única; `check_category_similarity` compara categorias de baixa cardinalidade com `WRatio` e registra pares a partir de 90% de similaridade.
 - `check_exact_duplicates` conta repetições integrais de linhas; `check_approximate_duplicates` usa regras de bloqueio e similaridade textual para gerar candidatos, sem consolidá-los automaticamente.
 - `check_drift` detecta colunas adicionadas ou removidas, variação relevante na ausência e drift de distribuição nas colunas elegíveis.
 - `build_dimension_results` converte a cobertura e as severidades dos achados nos estados `aprovada`, `atencao`, `critica` ou `nao_avaliada`.
