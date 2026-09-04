@@ -149,16 +149,16 @@ def answer_from_vectorstore(
         fetch_k=RETRIEVAL_CANDIDATES * 3,
         lambda_mult=0.9,
     )
-    keyword_candidates = keyword_search(
-        vectorstore,
-        question,
-        k=RETRIEVAL_CANDIDATES,
-    )
-    candidates = _merge_unique_documents(
-        vector_candidates,
-        keyword_candidates,
-    )
-    sources = rerank_documents(question, candidates)
+    # keyword_candidates = keyword_search(
+    #     vectorstore,
+    #     question,
+    #     k=RETRIEVAL_CANDIDATES,
+    # )
+    # candidates = _merge_unique_documents(
+    #     vector_candidates,
+    #     keyword_candidates,
+    # )
+    sources = rerank_documents(question, vector_candidates)
     context = "\n\n".join(
         f"[{document_location(document)}]\n{document.page_content}"
         for document in sources

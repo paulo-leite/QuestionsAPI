@@ -55,19 +55,21 @@ Esta avaliação deriva dos requisitos apresentados no PDF *Avaliação de abord
 | Qualidade categórica | Surgiram categorias novas, raras ou equivalentes? | Vocabulário, frequências e semântica | Categoria afetada e tipo de desvio |
 | Acurácia/veracidade | O valor corresponde ao estado real? | Fonte de verdade ou validação de domínio | Divergência comprovada ou indício limitado |
 
+Na resposta da API, **Unicidade** é identificada por `duplicidade` — o teste procura a violação da unicidade — e **Estabilidade temporal** por `comportamento_temporal`. São apenas nomes técnicos do contrato; não constituem dimensões adicionais. Assim, o auditor continua apresentando exatamente oito dimensões.
+
 ## 4. Avaliação estratégica das abordagens
 
 Escala: **1 = baixa adequação** e **5 = alta adequação**. As notas servem para comparar características das abordagens e não constituem uma nota final de qualidade dos dados.
 
-| Abordagem | Cobertura | Precisão potencial | Explicabilidade | Esforço de domínio | Adaptação a mudanças | Prioridade na PoC |
-|---|---:|---:|---:|---:|---:|---|
-| Regras determinísticas e contratos | 3 | 5 | 5 | 4 | 2 | Muito alta |
-| Perfilamento estatístico | 4 | 3 | 4 | 2 | 3 | Muito alta |
-| Detecção de drift temporal | 3 | 4 | 4 | 3 | 5 | Alta |
-| Detecção de anomalias multivariadas | 4 | 3 | 2 | 3 | 4 | Média/alta |
-| Validação semântica de categorias | 3 | 3 | 3 | 4 | 4 | Média |
-| Resolução de entidades/duplicidade aproximada | 2 | 4 | 3 | 4 | 3 | Alta quando aplicável |
-| Comparação com fonte externa | 2 | 5 | 5 | 5 | 3 | Alta quando disponível |
+| Abordagem | Cobertura | Precisão potencial | Explicabilidadee | Esforço de domínio | Adaptação a mudanças | Prioridade na PoC |
+|---|---:|---:|-----------------:|---:|---:|---|
+| Regras determinísticas e contratos | 3 | 5 |                5 | 4 | 2 | Muito alta |
+| Perfilamento estatístico | 4 | 3 |                4 | 2 | 3 | Muito alta |
+| Detecção de drift temporal | 3 | 4 |                4 | 3 | 5 | Alta |
+| Detecção de anomalias multivariadas | 4 | 3 |                2 | 3 | 4 | Média/alta |
+| Validação semântica de categorias | 3 | 3 |                3 | 4 | 4 | Média |
+| Resolução de entidades/duplicidade aproximada | 2 | 4 |                3 | 4 | 3 | Alta quando aplicável |
+| Comparação com fonte externa | 2 | 5 |                5 | 5 | 3 | Alta quando disponível |
 
 ### 4.1 Regras determinísticas e contratos de dados
 
@@ -289,18 +291,49 @@ Essas alternativas não devem ser comparadas em uma única disputa. Deequ respon
 
 ### 7.3 Cobertura funcional esperada
 
-| Ferramenta | Completude/validade | Consistência | Perfil/drift | Anomalias | Categorias | Duplicidade aproximada | Evidência/relatório |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Pandera | Alta | Alta no DataFrame | Baixa | Baixa | Média | Não | Média |
-| GX Core | Alta | Alta, inclusive SQL customizado | Média | Baixa/média | Média | Não | Alta |
-| Evidently | Média | Baixa | Alta | Média | Alta para mudanças de frequência | Não | Alta |
-| scikit-learn/PyOD | Não | Multivariada, indireta | Baixa | Alta | Baixa | Não | Baixa |
-| RapidFuzz | Não | Não | Não | Não | Alta para similaridade textual | Média, por campo | Baixa |
-| Splink | Não | Não | Não | Não | Média | Alta | Alta para escores de ligação |
-| Soda Core | Alta | Alta | Depende da edição/recurso | Depende da edição/recurso | Média | Não | Alta |
-| Deequ | Alta | Alta | Média | Média | Média | Não | Média |
+A matriz abaixo usa exatamente as oito dimensões definidas na seção 3. Ela explicita se a ferramenta **detecta** o problema ou apenas **apoia** sua execução:
 
-“Alta” significa boa adequação à capacidade, não desempenho garantido. A PoC deve confirmar cobertura, falsos positivos, desempenho e facilidade de integração com o contrato de achados.
+- **D — atuação direta:** possui mecanismo próprio ou regra configurável que produz o achado da dimensão;
+- **A — apoio:** fornece cálculo, armazenamento, consulta, comparação ou orquestração, mas depende de regra, modelo ou referência implementada fora da ferramenta;
+- **— — não atua:** não há cobertura relevante no uso proposto.
+
+| Ferramenta | Completude | Validade | Consistência | Unicidade | Atipicidade | Estabilidade temporal | Qualidade categórica | Acurácia/veracidade |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Pandera** | D | D | D | D | — | — | D | A<sup>1</sup> |
+| **GX Core** | D | D | D | D | A | A | D | A<sup>1</sup> |
+| **Evidently** | D | A | — | A | D | D | D | — |
+| **scikit-learn / PyOD** | — | — | — | — | D | A | — | — |
+| **RapidFuzz** | — | — | — | A | — | — | D | — |
+| **Splink** | — | — | — | D | — | — | A | — |
+| **DuckDB** | A | A | A | A | A | A | A | A<sup>1</sup> |
+| **Soda Core** | D | D | D | D | A | A | D | A<sup>1</sup> |
+| **Deequ** | D | D | D | D | D | A | D | A<sup>1</sup> |
+| **River** | — | — | — | — | D | D | — | — |
+| **dbt data tests** | D | D | D | D | — | — | D | A<sup>1</sup> |
+| **GX Cloud / Soda Cloud** | D<sup>2</sup> | D<sup>2</sup> | D<sup>2</sup> | D<sup>2</sup> | A<sup>2</sup> | A<sup>2</sup> | D<sup>2</sup> | A<sup>1, 2</sup> |
+
+<sup>1</sup> Em **acurácia/veracidade**, a ferramenta apenas operacionaliza uma comparação ou regra. A dimensão só pode produzir divergência comprovada quando a entrada inclui uma fonte externa confiável, governada e tratada como fonte de verdade. Comparar o lote atual com um período histórico mede consistência ou estabilidade temporal, não acurácia.
+
+<sup>2</sup> Plataformas gerenciadas herdam a cobertura do motor e dos recursos contratados; seu ganho principal está em operação, histórico, alertas, colaboração e governança, não em provar veracidade por si mesmas.
+
+#### Papel concreto de cada ferramenta nas dimensões
+
+| Ferramenta | Onde atua diretamente | Papel e limite no auditor |
+|---|---|---|
+| **Pandera** | Completude, validade, consistência, unicidade e qualidade categórica | Executa contratos no DataFrame: nulidade, tipo, formato, intervalo, domínio, unicidade e regras entre colunas. Não detecta drift nem anomalias por si só. |
+| **GX Core** | Completude, validade, consistência, unicidade e qualidade categórica | Versiona *Expectations*, executa validações e organiza evidências. Atipicidade e estabilidade exigem expectativas, consultas ou métricas adicionais; acurácia exige referência externa. |
+| **Evidently** | Completude agregada, atipicidade estatística, estabilidade temporal e qualidade categórica | Perfila ausência e distribuições, compara lote e baseline e detecta mudanças numéricas ou categóricas. Não confirma contradição lógica nem verdade factual. |
+| **scikit-learn / PyOD** | Atipicidade | Produz escores de anomalia univariada ou multivariada. Um caso raro é apenas candidato a investigação, não erro comprovado; apoio temporal depende de treinamento por janela. |
+| **RapidFuzz** | Qualidade categórica | Mede similaridade textual para sugerir grafias equivalentes; auxilia pares de duplicidade, mas não decide sozinho que categorias ou entidades são iguais. |
+| **Splink** | Unicidade | Bloqueia, pontua e agrupa candidatos à mesma entidade. Pode usar campos categóricos como evidência, mas sua finalidade é resolução de entidades, não saneamento do vocabulário. |
+| **DuckDB** | Nenhuma isoladamente | É o substrato SQL local para leitura, agregação, *joins*, perfilamento e backend do Splink. Apoia as oito dimensões quando recebe regras ou referências, mas não define nenhum critério de qualidade. |
+| **Soda Core** | Completude, validade, consistência, unicidade e qualidade categórica | Executa verificações declarativas em SQL/YAML. Anomalia e mudança temporal dependem do recurso/edição e de histórico; acurácia depende de regra contra fonte confiável. |
+| **Deequ** | Completude, validade, consistência, unicidade, atipicidade e qualidade categórica | Calcula métricas e verificações distribuídas em Spark. Comparação temporal precisa de métricas históricas; acurácia continua dependente de referência externa. |
+| **River** | Atipicidade e estabilidade temporal | Atualiza detectores incrementalmente em streaming e identifica mudança de comportamento. Não substitui contratos, deduplicação ou validação referencial. |
+| **dbt data tests** | Completude, validade, consistência, unicidade e qualidade categórica | Testa modelos no warehouse, inclusive `not_null`, `unique`, relações e valores aceitos. Não é motor de anomalia ou drift; comparação de acurácia requer uma fonte confiável modelada. |
+| **GX Cloud / Soda Cloud** | As dimensões cobertas pelo respectivo motor e plano | Centralizam execução, resultados, alertas e colaboração. A cobertura efetiva deve ser verificada por edição, conector e contrato; a plataforma não transforma baseline histórico em fonte de verdade. |
+
+“Atuação direta” significa adequação funcional, não desempenho garantido. A PoC deve confirmar cobertura, falsos positivos, desempenho e facilidade de integração com o contrato de achados. Ferramentas marcadas como apoio não devem receber o crédito por um achado produzido, por exemplo, por uma regra nativa executada sobre uma consulta DuckDB.
 
 ### 7.4 Critérios de seleção e descarte
 
@@ -496,6 +529,20 @@ curl -X POST http://127.0.0.1:8000/data-quality/analyze \
 O arquivo de referência representa um período considerado comparável, e não uma fonte de verdade. Por isso, ele habilita a dimensão `comportamento_temporal`, mas não altera `acuracia_veracidade`, que permanece como não avaliada.
 
 ### Verificações implementadas
+
+Na implementação atual, a responsabilidade por dimensão é explícita. **Motor nativo** inclui parsing e regras em Python; **Pandas** e **DuckDB** são mecanismos de execução e apoio, enquanto as demais bibliotecas produzem verificações especializadas.
+
+| Ferramenta/componente atual | Dimensões em que atua | Responsabilidade efetivamente implementada |
+|---|---|---|
+| **Motor nativo Python** | Completude, validade, atipicidade, unicidade, qualidade categórica e estabilidade temporal | Parsing, largura de linhas, marcadores de ausência, IQR, duplicatas exatas, categorias raras, mudança de esquema e variação de ausência; também consolida o estado das oito dimensões. |
+| **Pandas** | Validade, consistência, unicidade e estabilidade temporal; apoio às demais | Normalização tabular, agrupamento por entidade, comparação entre fontes, preparação de dados e cálculos auxiliares. |
+| **Pandera** | Validade e consistência | Valida tipos inferidos em modo `lazy`, ordem entre datas e coerência entre limites numéricos. |
+| **Evidently** | Completude e estabilidade temporal; apoio à atipicidade e à qualidade categórica | Gera perfil estatístico com `DataSummaryPreset` e, quando há referência, drift numérico e categórico com `DataDriftPreset`. O perfil subsidia as outras dimensões, mas os achados atuais de atipicidade são emitidos pelo IQR nativo e pelo scikit-learn. |
+| **scikit-learn** | Atipicidade | Executa `IsolationForest` sobre combinações numéricas elegíveis. |
+| **RapidFuzz** | Qualidade categórica; apoio à unicidade | Pontua grafias categóricas semelhantes e auxilia a comparação textual dos candidatos a duplicidade. |
+| **Splink + DuckDB** | Unicidade | Gera candidatos a duplicatas aproximadas mediante bloqueio e similaridade; DuckDB funciona como backend local. |
+| **Consolidador de dimensões** | Todas as oito | Converte cobertura e severidade dos achados nos estados públicos; não executa detecção e não muda `acuracia_veracidade` sem verificação própria. |
+| **Nenhuma ferramenta atual** | Acurácia/veracidade | Não há integração com fonte de verdade. O CSV opcional é histórico comparável e habilita consistência entre fontes e estabilidade temporal, nunca a certificação de acurácia. |
 
 | Dimensão | Verificação automática | Evidência produzida |
 |---|---|---|

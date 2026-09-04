@@ -17,6 +17,6 @@ def get_llm() -> ChatOpenAI:
             "https://waymodels.virtus.ufcg.edu.br:4000/v1",
         ),
         api_key=SecretStr(require_env("LLM_API_KEY")),
-        model=os.getenv("LLM_MODEL", "gemma4-26b-a4b"),
+        model=os.getenv("LLM_MODEL", "qwen3.8-27b"),
         temperature=0.2,
     )

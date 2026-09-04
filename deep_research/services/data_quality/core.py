@@ -38,6 +38,7 @@ class AnalysisContext:
     findings: list[DataQualityFinding]
     evaluated_dimensions: set[str]
     next_finding_number: int = 1
+    total_rows: int = 0
 
     def add_finding(
         self,
@@ -52,25 +53,73 @@ class AnalysisContext:
         evidence: list[str] | None = None,
         metrics: dict | None = None,
         limitations: str | None = None,
+        coverage_percentage: float | None = None,
+        confidence_basis: list[str] | None = None,
+        veracity_confidence: float | None = None,
     ) -> None:
         """Cria um achado numerado, limita evidências e o adiciona ao contexto."""
         finding_id = f"DQ-{self.next_finding_number:04d}"
         self.next_finding_number += 1
+        finding_metrics = metrics or {}
+        resolved_coverage = (
+            coverage_percentage
+            if coverage_percentage is not None
+            else self._coverage_from_metrics(finding_metrics)
+        )
+        resolved_basis = confidence_basis or self._confidence_basis_from_metrics(
+            finding_metrics
+        )
         self.findings.append(
             DataQualityFinding(
                 finding_id=finding_id,
                 dimension=dimension,
                 severity=severity,
                 confidence=round(confidence, 3),
+                coverage_percentage=resolved_coverage,
+                confidence_basis=resolved_basis,
+                veracity_confidence=veracity_confidence,
                 scope=scope,
                 title=title,
                 description=description,
                 evidence=(evidence or [])[:MAX_EVIDENCE],
-                metrics=metrics or {},
+                metrics=finding_metrics,
                 recommendation=recommendation,
                 limitations=limitations,
             )
         )
+
+    def _coverage_from_metrics(self, metrics: dict) -> float:
+        """Infere cobertura das contagens auditáveis registradas pelo validador."""
+        explicit = metrics.get("coverage_percentage")
+        if isinstance(explicit, (int, float)):
+            return round(max(0.0, min(100.0, float(explicit))), 2)
+        if self.total_rows:
+            for key in (
+                "comparable_rows",
+                "evaluated_rows",
+                "evaluated_row_count",
+                "row_count",
+            ):
+                evaluated = metrics.get(key)
+                if isinstance(evaluated, (int, float)):
+                    return round_percentage(evaluated, self.total_rows)
+        return 100.0
+
+    @staticmethod
+    def _confidence_basis_from_metrics(metrics: dict) -> list[str]:
+        """Descreve de onde vem a confiança sem confundi-la com veracidade."""
+        basis: list[str] = []
+        engine = metrics.get("validation_engine")
+        if engine in {"pandera", "pandas", "native"}:
+            basis.append(f"validação determinística com {engine}")
+        elif isinstance(engine, str) and engine:
+            basis.append(f"avaliação automatizada com {engine}")
+        if metrics.get("agent_generated"):
+            basis.append("aplicabilidade da regra inferida por modelo")
+        rule = metrics.get("rule") or metrics.get("pandera_check")
+        if isinstance(rule, str) and rule:
+            basis.append(f"regra auditável: {rule}")
+        return basis or ["regra interna do analisador"]
 
 
 def round_percentage(numerator: int | float, denominator: int | float) -> float:

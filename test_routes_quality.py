@@ -7,11 +7,21 @@ from unittest.mock import patch
 from fastapi import UploadFile
 
 from deep_research.errors import ApplicationError
-from deep_research.models import UploadResponse
+from deep_research.models import ConsistencyRuleSet, UploadResponse
 from deep_research.routes import upload_document
 
 
 class DocumentUploadQualityTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.consistency_agent_patcher = patch(
+            "deep_research.services.data_quality_service.propose_consistency_rules",
+            return_value=ConsistencyRuleSet(),
+        )
+        self.consistency_agent_patcher.start()
+
+    def tearDown(self) -> None:
+        self.consistency_agent_patcher.stop()
+
     @staticmethod
     def _csv_upload_response() -> UploadResponse:
         """Cria a resposta simulada usada pelos testes de upload de CSV."""

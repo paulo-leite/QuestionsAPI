@@ -3,6 +3,9 @@
 import unittest
 from unittest.mock import patch
 
+from deep_research.models import ConsistencyRuleSet, ConsistencyRuleSpec
+from deep_research.services.data_quality.consistency import check_consistency
+from deep_research.services.data_quality.core import AnalysisContext, parse_csv
 from deep_research.services.data_quality_service import analyze_csv_quality
 
 
@@ -36,6 +39,16 @@ REFERENCE_CSV = b"""id,name,age,start_date,end_date,status
 
 
 class DataQualityAnalysisTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.consistency_agent_patcher = patch(
+            "deep_research.services.data_quality_service.propose_consistency_rules"
+        )
+        self.propose_consistency_rules = self.consistency_agent_patcher.start()
+        self.propose_consistency_rules.return_value = ConsistencyRuleSet()
+
+    def tearDown(self) -> None:
+        self.consistency_agent_patcher.stop()
+
     def test_detects_objective_and_statistical_problems(self) -> None:
         report = analyze_csv_quality(CURRENT_CSV, "current.csv")
 
@@ -215,6 +228,21 @@ data-invalida,2025-02-01
         self.assertEqual(finding.metrics["skipped_ambiguous_rows"], 1)
         self.assertEqual(finding.metrics["skipped_timezone_mismatch_rows"], 1)
         self.assertEqual(finding.metrics["inconsistency_percentage"], 50.0)
+        self.assertEqual(finding.confidence_percentage, 98.0)
+        self.assertEqual(finding.coverage_percentage, 33.33)
+        self.assertIn(
+            "validação determinística com pandera",
+            finding.confidence_basis,
+        )
+        self.assertIn(
+            "regra auditável: date_start_not_after_end",
+            finding.confidence_basis,
+        )
+        self.assertIsNone(finding.veracity_confidence)
+        self.assertEqual(
+            finding.model_dump()["confidence_percentage"],
+            98.0,
+        )
 
     def test_consistency_detects_numeric_range_contradiction(self) -> None:
         content = b"""product_id,price_min,price_max
@@ -481,6 +509,116 @@ invalido,data-invalida
             finding.metrics["linkage_method"],
             "deterministic_fuzzy_blocking",
         )
+
+
+    def test_agent_rules_are_executed_without_dynamic_code(self) -> None:
+        table = parse_csv(
+            b"valor_pago,valor_liquidado,valor_empenhado,cpf_cnpj,mes,data_empenho\n"
+            b"120,100,110,9.12E+12,02/fev,2026-01-10\n"
+            b"10,20,30,12345678901,01/jan,2026-01-11\n"
+        )
+        context = AnalysisContext(findings=[], evaluated_dimensions=set())
+        rules = [
+            ConsistencyRuleSpec(
+                rule_id="ordem_fases", rule_type="ordered_values",
+                columns=["valor_pago", "valor_liquidado", "valor_empenhado"],
+                operator="<=", severity="alta", confidence=0.99,
+                rationale="As fases acumuladas devem ser crescentes.",
+            ),
+            ConsistencyRuleSpec(
+                rule_id="documento_sem_notacao_cientifica",
+                rule_type="identifier_format", columns=["cpf_cnpj"],
+                identifier_format="not_scientific_notation", severity="alta",
+                confidence=0.99, rationale="Notação científica pode remover dígitos.",
+            ),
+            ConsistencyRuleSpec(
+                rule_id="mes_da_data", rule_type="date_matches_period",
+                columns=["data_empenho", "mes"],
+                rationale="O mês deve corresponder à data.",
+            ),
+        ]
+
+        rejected = check_consistency(table, context, rules)
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(
+            {finding.metrics["rule"] for finding in context.findings},
+            {"ordem_fases", "documento_sem_notacao_cientifica", "mes_da_data"},
+        )
+        self.assertTrue(all(
+            finding.metrics["agent_generated"] for finding in context.findings
+        ))
+
+    def test_agent_rule_with_unknown_column_is_rejected(self) -> None:
+        table = parse_csv(b"id,nome\n1,Ana\n")
+        context = AnalysisContext(findings=[], evaluated_dimensions=set())
+        rule = ConsistencyRuleSpec(
+            rule_id="coluna_inventada", rule_type="unique_key",
+            columns=["nao_existe"],
+            rationale="Regra inválida para testar o contrato.",
+        )
+
+        rejected = check_consistency(table, context, [rule])
+
+        self.assertEqual(len(rejected), 1)
+        self.assertIn("colunas inexistentes", rejected[0])
+        self.assertEqual(context.findings, [])
+
+    def test_agent_numeric_rule_infers_portuguese_monetary_format(self) -> None:
+        table = parse_csv(
+            "valor_pago;valor_liquidado;valor_empenhado\n"
+            "6.765,94;6.765,94;7.000\n".encode()
+        )
+        context = AnalysisContext(findings=[], evaluated_dimensions=set())
+        rule = ConsistencyRuleSpec(
+            rule_id="ordem_monetaria", rule_type="ordered_values",
+            columns=["valor_pago", "valor_liquidado", "valor_empenhado"],
+            operator="<=", rationale="Fases acumuladas da despesa.",
+        )
+
+        rejected = check_consistency(table, context, [rule])
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(context.findings, [])
+        self.assertIn("consistencia", context.evaluated_dimensions)
+
+    @patch("deep_research.services.data_quality_service.propose_consistency_rules")
+    def test_analysis_automatically_activates_consistency_agent(self, propose) -> None:
+        propose.return_value = ConsistencyRuleSet(rules=[
+            ConsistencyRuleSpec(
+                rule_id="codigo_nome_estavel", rule_type="column_mapping",
+                columns=["codigo", "nome"],
+                rationale="Um código deve preservar o mesmo nome.",
+            )
+        ])
+
+        report = analyze_csv_quality(
+            b"codigo,nome\n1,Ana\n1,Ana Maria\n2,Bia\n", "cadastro.csv",
+        )
+
+        propose.assert_called_once()
+        self.assertIn("llm-rule-proposal", report.validation_engines)
+        self.assertTrue(any(
+            finding.metrics.get("rule") == "codigo_nome_estavel"
+            for finding in report.findings
+        ))
+
+    @patch(
+        "deep_research.services.data_quality_service.propose_consistency_rules",
+        side_effect=RuntimeError("modelo indisponível"),
+    )
+    def test_agent_failure_preserves_deterministic_analysis(self, _propose) -> None:
+        report = analyze_csv_quality(
+            b"start_date,end_date\n2026-02-01,2026-01-01\n", "datas.csv",
+        )
+
+        self.assertTrue(any(
+            finding.metrics.get("rule") == "date_start_not_after_end"
+            for finding in report.findings
+        ))
+        self.assertTrue(any(
+            "agente de consistência" in item for item in report.limitations
+        ))
 
 
 if __name__ == "__main__":

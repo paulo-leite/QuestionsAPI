@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from .config import MAX_RESEARCH_ROUNDS
 
@@ -165,11 +165,44 @@ class DataQualityColumnProfile(BaseModel):
     top_values: list[DataQualityTopValue] = Field(default_factory=list)
 
 
+class ConsistencyRuleSpec(BaseModel):
+    """Regra relacional segura proposta pelo agente de consistência."""
+
+    rule_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_]+$")
+    rule_type: Literal[
+        "ordered_values",
+        "non_negative",
+        "unique_key",
+        "column_mapping",
+        "date_matches_period",
+        "conditional_equality",
+        "identifier_format",
+    ]
+    columns: list[str] = Field(min_length=1, max_length=10)
+    operator: Literal["<=", ">=", "<", ">", "=="] | None = None
+    condition_value: str | None = Field(default=None, max_length=200)
+    expected_value: str | None = Field(default=None, max_length=200)
+    identifier_format: Literal["digits_only", "not_scientific_notation"] | None = None
+    severity: Literal["baixa", "media", "alta"] = "media"
+    confidence: float = Field(default=0.8, ge=0, le=1)
+    rationale: str = Field(min_length=1, max_length=500)
+    limitation: str | None = Field(default=None, max_length=500)
+
+
+class ConsistencyRuleSet(BaseModel):
+    """Contrato validado retornado pelo agente de consistência."""
+
+    rules: list[ConsistencyRuleSpec] = Field(default_factory=list, max_length=20)
+
+
 class DataQualityFinding(BaseModel):
     finding_id: str
     dimension: str
     severity: Literal["baixa", "media", "alta"]
     confidence: float = Field(ge=0, le=1)
+    coverage_percentage: float = Field(default=100.0, ge=0, le=100)
+    confidence_basis: list[str] = Field(default_factory=list)
+    veracity_confidence: float | None = Field(default=None, ge=0, le=1)
     scope: str
     title: str
     description: str
@@ -177,6 +210,12 @@ class DataQualityFinding(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
     recommendation: str
     limitations: str | None = None
+
+    @computed_field
+    @property
+    def confidence_percentage(self) -> float:
+        """Expõe a confiança também na escala percentual usada pelo relatório."""
+        return round(self.confidence * 100, 2)
 
 
 class DataQualityDimensionResult(BaseModel):

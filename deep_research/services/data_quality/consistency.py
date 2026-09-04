@@ -7,7 +7,9 @@ import re
 import pandas as pd
 import pandera.pandas as pa
 
-from .core import AnalysisContext, ParsedTable, is_missing, normalize_name, parse_number, round_percentage
+from deep_research.models import ConsistencyRuleSpec
+
+from .core import AnalysisContext, ParsedTable, is_missing, normalize_name, parse_date, parse_number, round_percentage
 
 DATE_MARKER_PAIRS = (("inicio", "fim"), ("inicial", "final"), ("start", "end"), ("from", "to"))
 RANGE_MARKER_PAIRS = (("min", "max"), ("minimum", "maximum"), ("minimo", "maximo"), ("lower", "upper"))
@@ -288,12 +290,332 @@ def _check_stable_attributes(
         )
 
 
-def check_consistency(table: ParsedTable, context: AnalysisContext) -> None:
-    """Executa todas as regras internas da dimensão de consistência."""
+def _validated_rule_columns(
+    table: ParsedTable,
+    rule: ConsistencyRuleSpec,
+    expected_count: int | None = None,
+    minimum_count: int = 1,
+) -> list[str]:
+    """Valida referências de colunas sem permitir expressões produzidas pelo modelo."""
+    if len(rule.columns) < minimum_count:
+        raise ValueError(f"{rule.rule_id}: quantidade insuficiente de colunas")
+    if expected_count is not None and len(rule.columns) != expected_count:
+        raise ValueError(f"{rule.rule_id}: esperava {expected_count} colunas")
+    if len(set(rule.columns)) != len(rule.columns):
+        raise ValueError(f"{rule.rule_id}: contém colunas repetidas")
+    unknown = [column for column in rule.columns if column not in table.headers]
+    if unknown:
+        raise ValueError(f"{rule.rule_id}: colunas inexistentes: {', '.join(unknown)}")
+    return rule.columns
+
+
+def _complete_frame(dataframe: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    selected = dataframe.loc[:, columns]
+    return selected.loc[selected.map(lambda value: not is_missing(str(value))).all(axis=1)]
+
+
+def _numeric_frame(dataframe: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    complete = _complete_frame(dataframe, columns)
+    numeric = pd.DataFrame(index=complete.index)
+    locale_pattern = r"[+-]?\d{1,3}(?:\.\d{3})*,\d+|[+-]?\d+,\d+"
+    portuguese_locale = any(
+        complete[column].map(lambda value: str(value).strip()).str.fullmatch(
+            locale_pattern
+        ).any()
+        for column in columns
+    )
+    for column in columns:
+        values = complete[column].map(lambda value: str(value).strip())
+        # Uma vírgula decimal em qualquer valor é evidência forte de que pontos
+        # das colunas comparadas representam separadores de milhar (ex.: 7.000).
+        if portuguese_locale:
+            numeric[column] = values.map(
+                lambda value: parse_number(value.replace(".", "").replace(",", "."))
+            )
+        else:
+            numeric[column] = values.map(parse_number)
+    return numeric.dropna()
+
+
+def _add_agent_finding(
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+    *,
+    title: str,
+    description: str,
+    evidence: list[str],
+    metrics: dict,
+) -> None:
+    context.add_finding(
+        dimension="consistencia",
+        severity=rule.severity,
+        confidence=rule.confidence,
+        scope=f"colunas:{','.join(rule.columns)}",
+        title=title,
+        description=description,
+        evidence=evidence,
+        metrics={
+            "validation_engine": "agent_rule_executor",
+            "agent_generated": True,
+            "rule": rule.rule_id,
+            "rule_type": rule.rule_type,
+            "rationale": rule.rationale,
+            **metrics,
+        },
+        recommendation="Revisar os registros sinalizados e confirmar a regra com o responsável pela fonte.",
+        limitations=rule.limitation,
+    )
+
+
+def _execute_ordered_values(
+    table: ParsedTable,
+    dataframe: pd.DataFrame,
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+) -> None:
+    columns = _validated_rule_columns(table, rule, minimum_count=2)
+    if rule.operator not in {"<=", ">=", "<", ">", "=="}:
+        raise ValueError(f"{rule.rule_id}: operador obrigatório ou não permitido")
+    numeric = _numeric_frame(dataframe, columns)
+    if numeric.empty:
+        return
+    comparisons = {
+        "<=": lambda left, right: left.le(right),
+        ">=": lambda left, right: left.ge(right),
+        "<": lambda left, right: left.lt(right),
+        ">": lambda left, right: left.gt(right),
+        "==": lambda left, right: left.eq(right),
+    }
+    valid = pd.Series(True, index=numeric.index)
+    compare = comparisons[rule.operator]
+    for left, right in zip(columns, columns[1:]):
+        valid &= compare(numeric[left], numeric[right])
+    context.evaluated_dimensions.add("consistencia")
+    if valid.all():
+        return
+    failed = numeric.loc[~valid]
+    _add_agent_finding(
+        context, rule,
+        title="Ordem numérica inconsistente",
+        description=f"Existem {len(failed)} registros que não respeitam {' {} '.format(rule.operator).join(columns)}.",
+        evidence=[
+            f"linha {index}: " + "; ".join(f"{column}={row[column]:g}" for column in columns)
+            for index, row in failed.head(10).iterrows()
+        ],
+        metrics={
+            "operator": rule.operator, "comparable_rows": len(numeric),
+            "inconsistent_rows": len(failed),
+            "inconsistency_percentage": round_percentage(len(failed), len(numeric)),
+        },
+    )
+
+
+def _execute_non_negative(
+    table: ParsedTable,
+    dataframe: pd.DataFrame,
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+) -> None:
+    columns = _validated_rule_columns(table, rule)
+    numeric = _numeric_frame(dataframe, columns)
+    if numeric.empty:
+        return
+    invalid = numeric.lt(0).any(axis=1)
+    context.evaluated_dimensions.add("consistencia")
+    if not invalid.any():
+        return
+    failed = numeric.loc[invalid]
+    _add_agent_finding(
+        context, rule,
+        title="Valor negativo incompatível com a regra de domínio",
+        description=f"Existem {len(failed)} registros com valores negativos.",
+        evidence=[
+            f"linha {index}: " + "; ".join(f"{column}={row[column]:g}" for column in columns)
+            for index, row in failed.head(10).iterrows()
+        ],
+        metrics={"comparable_rows": len(numeric), "inconsistent_rows": len(failed)},
+    )
+
+
+def _execute_unique_key(
+    table: ParsedTable,
+    dataframe: pd.DataFrame,
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+) -> None:
+    columns = _validated_rule_columns(table, rule)
+    usable = _complete_frame(dataframe, columns)
+    if usable.empty:
+        return
+    duplicated = usable.duplicated(columns, keep=False)
+    context.evaluated_dimensions.add("consistencia")
+    if not duplicated.any():
+        return
+    failed = usable.loc[duplicated]
+    grouped = failed.groupby(columns, sort=False, dropna=False)
+    evidence = []
+    for key, group in list(grouped)[:10]:
+        values = key if isinstance(key, tuple) else (key,)
+        label = "; ".join(f"{column}={value}" for column, value in zip(columns, values))
+        evidence.append(f"{label}; linhas={','.join(str(index) for index in group.index)}")
+    _add_agent_finding(
+        context, rule,
+        title="Chave de negócio repetida",
+        description=f"Foram encontradas {grouped.ngroups} chaves repetidas.",
+        evidence=evidence,
+        metrics={"evaluated_rows": len(usable), "duplicate_rows": len(failed), "duplicate_keys": grouped.ngroups},
+    )
+
+
+def _execute_column_mapping(
+    table: ParsedTable,
+    dataframe: pd.DataFrame,
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+) -> None:
+    key, attribute = _validated_rule_columns(table, rule, expected_count=2)
+    usable = _complete_frame(dataframe, [key, attribute])
+    if usable.empty:
+        return
+    grouped = usable.groupby(key, sort=False)[attribute].agg(
+        lambda values: frozenset(str(value) for value in values)
+    )
+    context.evaluated_dimensions.add("consistencia")
+    conflicts = grouped[grouped.map(len) > 1]
+    if conflicts.empty:
+        return
+    _add_agent_finding(
+        context, rule,
+        title="Atributo instável para a mesma chave",
+        description=f"Foram encontradas {len(conflicts)} chaves associadas a valores divergentes.",
+        evidence=[f"{key}={value}: " + " | ".join(sorted(values)) for value, values in conflicts.head(10).items()],
+        metrics={"compared_entities": len(grouped), "conflicting_entities": len(conflicts)},
+    )
+
+
+def _period_month(value: object) -> int | None:
+    candidate = normalize_name(str(value))
+    match = re.match(r"^(\d{1,2})(?:_|$)", candidate)
+    if match and 1 <= int(match.group(1)) <= 12:
+        return int(match.group(1))
+    names = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+             "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12}
+    return names.get(candidate[:3])
+
+
+def _execute_date_matches_period(
+    table: ParsedTable,
+    dataframe: pd.DataFrame,
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+) -> None:
+    date_column, period_column = _validated_rule_columns(table, rule, expected_count=2)
+    usable = _complete_frame(dataframe, [date_column, period_column])
+    dates = usable[date_column].map(lambda value: parse_date(str(value)))
+    months = usable[period_column].map(_period_month)
+    comparable = usable.loc[dates.notna() & months.notna()]
+    if comparable.empty:
+        return
+    invalid = dates.loc[comparable.index].map(lambda value: value.month).ne(months.loc[comparable.index])
+    context.evaluated_dimensions.add("consistencia")
+    if not invalid.any():
+        return
+    failed = comparable.loc[invalid]
+    _add_agent_finding(
+        context, rule,
+        title="Data incompatível com o período informado",
+        description=f"Existem {len(failed)} registros cujo mês não corresponde à data.",
+        evidence=[f"linha {index}: {date_column}={row[date_column]}; {period_column}={row[period_column]}" for index, row in failed.head(10).iterrows()],
+        metrics={"comparable_rows": len(comparable), "inconsistent_rows": len(failed)},
+    )
+
+
+def _execute_conditional_equality(
+    table: ParsedTable,
+    dataframe: pd.DataFrame,
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+) -> None:
+    condition_column, result_column = _validated_rule_columns(table, rule, expected_count=2)
+    if rule.condition_value is None or rule.expected_value is None:
+        raise ValueError(f"{rule.rule_id}: valores da condição são obrigatórios")
+    usable = _complete_frame(dataframe, [condition_column, result_column])
+    condition = usable[condition_column].map(normalize_name).eq(normalize_name(rule.condition_value))
+    applicable = usable.loc[condition]
+    if applicable.empty:
+        return
+    invalid = applicable[result_column].map(normalize_name).ne(normalize_name(rule.expected_value))
+    context.evaluated_dimensions.add("consistencia")
+    if not invalid.any():
+        return
+    failed = applicable.loc[invalid]
+    _add_agent_finding(
+        context, rule,
+        title="Regra condicional inconsistente",
+        description=f"Existem {len(failed)} registros que não atendem à consequência esperada.",
+        evidence=[f"linha {index}: {condition_column}={row[condition_column]}; {result_column}={row[result_column]}" for index, row in failed.head(10).iterrows()],
+        metrics={"applicable_rows": len(applicable), "inconsistent_rows": len(failed)},
+    )
+
+
+def _execute_identifier_format(
+    table: ParsedTable,
+    dataframe: pd.DataFrame,
+    context: AnalysisContext,
+    rule: ConsistencyRuleSpec,
+) -> None:
+    column = _validated_rule_columns(table, rule, expected_count=1)[0]
+    if rule.identifier_format not in {"digits_only", "not_scientific_notation"}:
+        raise ValueError(f"{rule.rule_id}: formato de identificador obrigatório")
+    usable = _complete_frame(dataframe, [column])[column]
+    if usable.empty:
+        return
+    if rule.identifier_format == "digits_only":
+        invalid = ~usable.map(lambda value: str(value).strip().isdigit())
+    else:
+        scientific = re.compile(r"^[+-]?\d+(?:[.,]\d+)?e[+-]?\d+$", re.IGNORECASE)
+        invalid = usable.map(lambda value: bool(scientific.fullmatch(str(value).strip())))
+    context.evaluated_dimensions.add("consistencia")
+    if not invalid.any():
+        return
+    failed = usable.loc[invalid]
+    _add_agent_finding(
+        context, rule,
+        title="Representação insegura de identificador",
+        description=f"Existem {len(failed)} identificadores incompatíveis com o formato esperado.",
+        evidence=[f"linha {index}: {column}={value}" for index, value in failed.head(10).items()],
+        metrics={"evaluated_rows": len(usable), "inconsistent_rows": len(failed), "identifier_format": rule.identifier_format},
+    )
+
+
+RULE_EXECUTORS = {
+    "ordered_values": _execute_ordered_values,
+    "non_negative": _execute_non_negative,
+    "unique_key": _execute_unique_key,
+    "column_mapping": _execute_column_mapping,
+    "date_matches_period": _execute_date_matches_period,
+    "conditional_equality": _execute_conditional_equality,
+    "identifier_format": _execute_identifier_format,
+}
+
+
+def check_consistency(
+    table: ParsedTable,
+    context: AnalysisContext,
+    proposed_rules: list[ConsistencyRuleSpec] | None = None,
+) -> list[str]:
+    """Executa regras internas e regras estruturadas propostas pelo agente."""
     dataframe = _table_frame(table)
     _check_date_order(table, dataframe, context)
     _check_numeric_ranges(table, dataframe, context)
     _check_stable_attributes(table, dataframe, context)
+    rejected: list[str] = []
+    for rule in proposed_rules or []:
+        try:
+            RULE_EXECUTORS[rule.rule_type](table, dataframe, context, rule)
+        except (KeyError, TypeError, ValueError) as error:
+            rejected.append(str(error))
+    return rejected
 
 
 def check_cross_source_consistency(current: ParsedTable, reference: ParsedTable, context: AnalysisContext) -> None:

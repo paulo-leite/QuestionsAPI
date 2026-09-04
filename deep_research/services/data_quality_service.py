@@ -7,6 +7,7 @@ import os
 # Evita telemetria em auditorias locais e no processo da API.
 os.environ.setdefault("DO_NOT_TRACK", "1")
 
+from deep_research.agents.consistency_agent import propose_consistency_rules
 from deep_research.models import DataQualityDatasetSummary, DataQualityReport
 
 from .data_quality.categorical import check_category_similarity, check_rare_categories
@@ -29,7 +30,11 @@ def analyze_csv_quality(
     """Analisa qualidade objetiva, estatística e temporal de um CSV."""
     table = parse_csv(content)
     reference = parse_csv(reference_content) if reference_content is not None else None
-    context = AnalysisContext(findings=[], evaluated_dimensions=set())
+    context = AnalysisContext(
+        findings=[],
+        evaluated_dimensions=set(),
+        total_rows=len(table.rows),
+    )
 
     check_structural_rows(table, context)
     profiling = profile_columns(table, context)
@@ -39,7 +44,20 @@ def analyze_csv_quality(
     check_multivariate(table, profiles, context)
     check_rare_categories(table, profiles, context)
     check_category_similarity(table, profiles, context)
-    check_consistency(table, context)
+    agent_rules = []
+    agent_limitations: list[str] = []
+    try:
+        agent_rules = propose_consistency_rules(table, profiles, filename).rules
+    except Exception as error:
+        agent_limitations.append(
+            "O agente de consistência não pôde propor regras; "
+            f"as verificações determinísticas continuaram ({type(error).__name__})."
+        )
+    rejected_rules = check_consistency(table, context, agent_rules)
+    if rejected_rules:
+        agent_limitations.append(
+            f"O executor rejeitou {len(rejected_rules)} regra(s) proposta(s) por não atenderem ao contrato seguro."
+        )
     duplicate_count = check_exact_duplicates(table, context)
     check_approximate_duplicates(table, profiles, context)
     if reference is not None:
@@ -59,7 +77,7 @@ def analyze_csv_quality(
         for severity in ("alta", "media", "baixa")
     }
     return DataQualityReport(
-        analysis_version="1.5.0",
+        analysis_version="1.6.0",
         validation_engines=list(dict.fromkeys([
             profiling.engine,
             "pandera",
@@ -67,6 +85,7 @@ def analyze_csv_quality(
             "rapidfuzz",
             "splink",
             *(["evidently"] if reference is not None else []),
+            *(["llm-rule-proposal", "agent-rule-executor"] if agent_rules else []),
             "native",
         ])),
         filename=filename,
@@ -89,5 +108,6 @@ def analyze_csv_quality(
             "Valores atípicos e mudanças de distribuição são sinais para investigação, não erros comprovados.",
             "Os pares indicados pelo Splink são candidatos determinísticos e devem ser revisados antes da consolidação.",
             "Consistência entre fontes exige configuração específica de domínio.",
+            *agent_limitations,
         ],
     )
