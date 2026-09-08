@@ -50,7 +50,11 @@ class DataQualityAnalysisTest(unittest.TestCase):
         self.consistency_agent_patcher.stop()
 
     def test_detects_objective_and_statistical_problems(self) -> None:
-        report = analyze_csv_quality(CURRENT_CSV, "current.csv")
+        with self.assertLogs(
+            "uvicorn.error.deep_research.data_quality",
+            level="INFO",
+        ) as captured_logs:
+            report = analyze_csv_quality(CURRENT_CSV, "current.csv")
 
         self.assertEqual(report.dataset.rows, 12)
         self.assertEqual(report.dataset.exact_duplicate_rows, 1)
@@ -72,6 +76,11 @@ class DataQualityAnalysisTest(unittest.TestCase):
         )
         self.assertEqual(validity.metrics["validation_engine"], "pandera")
         self.assertIn("linha 13: invalido", validity.evidence)
+        logs = "\n".join(captured_logs.output)
+        self.assertIn("etapa iniciada [etapa=validade_estrutural]", logs)
+        self.assertIn("etapa concluída [etapa=duplicidade_aproximada", logs)
+        self.assertIn("dimensão consolidada [dimensao=completude", logs)
+        self.assertIn("análise concluída [arquivo='current.csv'", logs)
 
     def test_compares_current_data_with_reference(self) -> None:
         report = analyze_csv_quality(
@@ -608,9 +617,13 @@ invalido,data-invalida
         side_effect=RuntimeError("modelo indisponível"),
     )
     def test_agent_failure_preserves_deterministic_analysis(self, _propose) -> None:
-        report = analyze_csv_quality(
-            b"start_date,end_date\n2026-02-01,2026-01-01\n", "datas.csv",
-        )
+        with self.assertLogs(
+            "uvicorn.error.deep_research.data_quality",
+            level="WARNING",
+        ):
+            report = analyze_csv_quality(
+                b"start_date,end_date\n2026-02-01,2026-01-01\n", "datas.csv",
+            )
 
         self.assertTrue(any(
             finding.metrics.get("rule") == "date_start_not_after_end"

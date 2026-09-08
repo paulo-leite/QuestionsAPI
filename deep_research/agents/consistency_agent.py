@@ -1,6 +1,8 @@
 """Agente que infere regras seguras de consistência a partir de uma fonte tabular."""
 
 import json
+import logging
+from time import perf_counter
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,6 +13,8 @@ from deep_research.models import (
 )
 from deep_research.services.data_quality.core import ParsedTable
 from deep_research.services.llm_service import get_llm
+
+logger = logging.getLogger("uvicorn.error.deep_research.consistency_agent")
 
 
 CONSISTENCY_PROMPT = """Você é um auditor que propõe regras de consistência para
@@ -43,6 +47,7 @@ de identificadores. Registre hipóteses relevantes em limitation.
 
 def new_consistency_agent() -> Any:
     """Cria a cadeia com saída validada pelo contrato de regras permitido."""
+    logger.info("Agente de consistência: iniciando construção da cadeia.")
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", CONSISTENCY_PROMPT),
@@ -52,7 +57,9 @@ def new_consistency_agent() -> Any:
             ),
         ]
     )
-    return prompt | get_llm().with_structured_output(ConsistencyRuleSet)
+    agent = prompt | get_llm().with_structured_output(ConsistencyRuleSet)
+    logger.info("Agente de consistência: cadeia construída.")
+    return agent
 
 
 def _dataset_context(
@@ -96,9 +103,36 @@ def propose_consistency_rules(
     filename: str,
 ) -> ConsistencyRuleSet:
     """Solicita automaticamente regras ao modelo e valida a resposta estruturada."""
-    result = new_consistency_agent().invoke(
+    started_at = perf_counter()
+    logger.info(
+        "Agente de consistência: execução iniciada "
+        "[arquivo=%r linhas=%d colunas=%d perfis=%d].",
+        filename,
+        len(table.rows),
+        len(table.headers),
+        len(profiles),
+    )
+    agent = new_consistency_agent()
+    dataset_context = _dataset_context(table, profiles, filename)
+    logger.info(
+        "Agente de consistência: contexto preparado [tamanho_caracteres=%d].",
+        len(dataset_context),
+    )
+    logger.info("Agente de consistência: chamada ao modelo iniciada.")
+    result = agent.invoke(
         {
-            "dataset_context": _dataset_context(table, profiles, filename),
+            "dataset_context": dataset_context,
         }
     )
-    return ConsistencyRuleSet.model_validate(result)
+    logger.info(
+        "Agente de consistência: resposta do modelo recebida [duracao_ms=%.2f].",
+        (perf_counter() - started_at) * 1000,
+    )
+    rules = ConsistencyRuleSet.model_validate(result)
+    logger.info(
+        "Agente de consistência: execução concluída "
+        "[duracao_ms=%.2f regras=%d].",
+        (perf_counter() - started_at) * 1000,
+        len(rules.rules),
+    )
+    return rules
