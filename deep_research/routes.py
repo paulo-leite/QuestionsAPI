@@ -73,9 +73,9 @@ def upload_document(
     if not filename.lower().endswith((".pdf", ".csv")):
         raise ApplicationError("Envie um arquivo PDF ou CSV.", 415)
 
-    content = file.file.read(MAX_FILE_SIZE + 1)
-    if len(content) > MAX_FILE_SIZE:
-        raise ApplicationError("O arquivo deve ter no máximo 20 MB.", 413)
+    # content = file.file.read(MAX_FILE_SIZE + 1)
+    # if len(content) > MAX_FILE_SIZE:
+    #     raise ApplicationError("O arquivo deve ter no máximo 20 MB.", 413)
 
     is_csv = filename.lower().endswith(".csv")
     if reference_file is not None and not is_csv:
