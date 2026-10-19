@@ -18,6 +18,7 @@ from .rerank_service import rerank_documents
 _BM25_K1 = 1.5
 _BM25_B = 0.75
 _TOKEN_PATTERN = r"(?u)[^\W_]+"
+_KEYWORD_PAGE_SIZE = 256
 
 RAG_SYSTEM_PROMPT = """Você é um analista especializado em localizar respostas em documentos.
 
@@ -66,14 +67,27 @@ def keyword_search(
     if not query.strip() or k < 1:
         return []
 
-    collection = vectorstore.get(include=["documents", "metadatas"])
-    contents = collection.get("documents") or []
-    metadatas = collection.get("metadatas") or [{} for _ in contents]
-    documents = [
-        Document(page_content=content, metadata=metadata or {})
-        for content, metadata in zip(contents, metadatas)
-        if content
-    ]
+    documents: list[Document] = []
+    offset = 0
+    while True:
+        collection = vectorstore.get(
+            include=["documents", "metadatas"],
+            limit=_KEYWORD_PAGE_SIZE,
+            offset=offset,
+        )
+        ids = collection.get("ids") or []
+        if not ids:
+            break
+        contents = collection.get("documents") or []
+        metadatas = collection.get("metadatas") or [{} for _ in contents]
+        documents.extend(
+            Document(page_content=content, metadata=metadata or {})
+            for content, metadata in zip(contents, metadatas, strict=False)
+            if content
+        )
+        offset += len(ids)
+        if len(ids) < _KEYWORD_PAGE_SIZE:
+            break
     if not documents:
         return []
 
@@ -104,7 +118,7 @@ def keyword_search(
     )
     return [
         documents[int(index)]
-        for index, score in zip(result_indices[0], result_scores[0])
+        for index, score in zip(result_indices[0], result_scores[0], strict=False)
         if float(score) > 0
     ]
 

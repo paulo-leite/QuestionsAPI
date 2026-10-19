@@ -1,6 +1,7 @@
 """Integração com o serviço externo de embeddings."""
 
 from functools import lru_cache
+from math import sqrt
 
 from langchain_core.embeddings import Embeddings
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
@@ -14,6 +15,7 @@ from deep_research.config import (
 )
 from deep_research.errors import ApplicationError
 
+from .embedding_limits import split_text_by_bytes
 
 class OpenAICompatibleEmbeddings(Embeddings):
     """Embeddings configuráveis expostos por uma API compatível com OpenAI."""
@@ -35,10 +37,12 @@ class OpenAICompatibleEmbeddings(Embeddings):
         if EMBEDDING_BATCH_SIZE < 1:
             raise RuntimeError("EMBEDDING_BATCH_SIZE deve ser maior que zero.")
 
-        embeddings: list[list[float]] = []
+        parts_by_text = [split_text_by_bytes(text) for text in texts]
+        parts = [part for group in parts_by_text for part in group]
+        part_embeddings: list[list[float]] = []
         try:
-            for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-                batch = texts[start:start + EMBEDDING_BATCH_SIZE]
+            for start in range(0, len(parts), EMBEDDING_BATCH_SIZE):
+                batch = parts[start:start + EMBEDDING_BATCH_SIZE]
                 response = self.client.embeddings.create(
                     model=self.model,
                     input=batch,
@@ -49,7 +53,7 @@ class OpenAICompatibleEmbeddings(Embeddings):
                         "O serviço de embeddings retornou um lote incompleto.",
                         502,
                     )
-                embeddings.extend(item.embedding for item in ordered)
+                part_embeddings.extend(item.embedding for item in ordered)
         except APITimeoutError as exc:
             raise ApplicationError(
                 "O serviço de embeddings excedeu o tempo limite.", 504
@@ -67,6 +71,26 @@ class OpenAICompatibleEmbeddings(Embeddings):
             raise ApplicationError(
                 "Não foi possível conectar ao serviço de embeddings.", 502
             ) from exc
+        embeddings: list[list[float]] = []
+        offset = 0
+        for group in parts_by_text:
+            vectors = part_embeddings[offset:offset + len(group)]
+            offset += len(group)
+            if len(vectors) == 1:
+                embeddings.append(vectors[0])
+                continue
+
+            # Weight each part by its size so a short tail has less influence.
+            weights = [len(part.encode("utf-8")) for part in group]
+            total = sum(weights)
+            combined = [
+                sum(vector[dimension] * weight for vector, weight in zip(vectors, weights)) / total
+                for dimension in range(len(vectors[0]))
+            ]
+            magnitude = sqrt(sum(value * value for value in combined))
+            embeddings.append(
+                [value / magnitude for value in combined] if magnitude else combined
+            )
         return embeddings
 
     def embed_query(self, text: str) -> list[float]:
